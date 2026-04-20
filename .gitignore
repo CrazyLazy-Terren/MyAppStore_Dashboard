@@ -1,0 +1,48 @@
+# API Credentials
+config.json
+*.pem
+*.p8
+.env
+keys/*.pem
+keys/*.p8
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.npm
+.eslintcache
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Environment
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

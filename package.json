@@ -1,0 +1,33 @@
+{
+  "name": "apple-ads-client",
+  "version": "1.0.0",
+  "description": "Apple Search Ads API Client with Frontend Dashboard",
+  "main": "next.config.mjs",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "extract-public-key": "node scripts/extractPublicKey.js",
+    "generate-test-keys": "node scripts/generateKeyPair.js"
+  },
+  "keywords": [
+    "apple-search-ads",
+    "apple-ads",
+    "api-client",
+    "advertising"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "jsonwebtoken": "^9.0.2",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "tailwindcss": "^4.2.1"
+  }
+}
