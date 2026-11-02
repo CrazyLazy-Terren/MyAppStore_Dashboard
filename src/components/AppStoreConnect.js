@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import SubscriptionWinBackOffers from './SubscriptionWinBackOffers'
+import SubscriptionPriceChange from './SubscriptionPriceChange'
 import { compareLocales, sortByLocale } from '@/lib/localeOrder'
 
 const APP_CLIP_LOCALIZATION_CREATE_STATES = ['PREPARE_FOR_SUBMISSION', 'DEVELOPER_REJECTED', 'REJECTED', 'METADATA_REJECTED', 'INVALID_BINARY']
@@ -4568,6 +4569,7 @@ export default function AppStoreConnect() {
                 </div>
               ) : null}
 
+              {selectedSubscription ? <SubscriptionPriceChange subscription={selectedSubscription} /> : null}
               {selectedSubscription ? <SubscriptionWinBackOffers subscription={selectedSubscription} /> : null}
             </div>
           )}

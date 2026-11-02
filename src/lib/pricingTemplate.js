@@ -108,3 +108,24 @@ export function snapToPricePoint(target, pricePoints = []) {
   }
   return best
 }
+
+// A charm price: x.99 or x.90 in a currency with cents; in a whole-unit
+// currency (JPY, KRW, IDR, …) a number ending in 9 before its trailing zeros
+// (89, 890, 49,000).
+export function isCharmPrice(price, wholeUnits = false) {
+  const [whole, cents] = Number(price).toFixed(2).split('.')
+  if (!wholeUnits) return cents === '99' || cents === '90'
+  return cents === '00' && whole.replace(/0+$/, '').endsWith('9')
+}
+
+// The charm price point closest to the target within `tolerance` (share of
+// the target); falls back to the plain closest point when none is in range.
+export function snapToCharmPricePoint(target, pricePoints = [], tolerance = 0.12) {
+  // A territory whose points never carry cents prices in whole units.
+  const wholeUnits = pricePoints.every((point) => Number(point.customerPrice) % 1 === 0)
+  const charming = pricePoints.filter((point) => {
+    const price = Number(point.customerPrice)
+    return price > 0 && isCharmPrice(price, wholeUnits) && Math.abs(price - target) <= target * tolerance
+  })
+  return snapToPricePoint(target, charming) || snapToPricePoint(target, pricePoints)
+}

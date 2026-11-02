@@ -1543,6 +1543,60 @@ class AppStoreConnectClient {
     )
   }
 
+  // Every price record of a subscription: the starting price (startDate null),
+  // past changes, preserved prices and scheduled changes, by territory.
+  async listSubscriptionPrices(subscriptionId) {
+    if (!subscriptionId) throw new Error('subscriptionId is required')
+
+    const prices = []
+    let endpoint = `/subscriptions/${subscriptionId}/prices?include=subscriptionPricePoint,territory&fields[subscriptionPricePoints]=customerPrice,proceeds&fields[territories]=currency&limit=200`
+    for (let page = 0; endpoint && page < 100; page += 1) {
+      const response = await this.request('GET', endpoint)
+      const included = new Map((response?.included || []).map((item) => [`${item.type}:${item.id}`, item]))
+
+      for (const item of response?.data || []) {
+        const territoryId = item.relationships?.territory?.data?.id || ''
+        const pricePointId = item.relationships?.subscriptionPricePoint?.data?.id || ''
+        const point = included.get(`subscriptionPricePoints:${pricePointId}`)
+        prices.push({
+          id: item.id,
+          territoryId,
+          currency: included.get(`territories:${territoryId}`)?.attributes?.currency || '',
+          startDate: item.attributes?.startDate || null,
+          preserved: Boolean(item.attributes?.preserved),
+          planType: item.attributes?.planType || 'UPFRONT',
+          pricePointId,
+          customerPrice: point?.attributes?.customerPrice ?? null,
+          proceeds: point?.attributes?.proceeds ?? null,
+        })
+      }
+
+      endpoint = response?.links?.next || null
+    }
+
+    return prices
+  }
+
+  // Schedules a price change in one territory. A territory holds one future
+  // change, so this replaces a change already scheduled there.
+  async createSubscriptionPrice(subscriptionId, { territoryId, pricePointId, startDate, preserveCurrentPrice = false }) {
+    if (!subscriptionId) throw new Error('subscriptionId is required')
+    if (!territoryId || !pricePointId) throw new Error('territoryId and pricePointId are required')
+
+    const response = await this.request('POST', '/subscriptionPrices', {
+      data: {
+        type: 'subscriptionPrices',
+        attributes: { preserveCurrentPrice: Boolean(preserveCurrentPrice), ...(startDate ? { startDate } : {}) },
+        relationships: {
+          subscription: { data: { type: 'subscriptions', id: subscriptionId } },
+          subscriptionPricePoint: { data: { type: 'subscriptionPricePoints', id: pricePointId } },
+          territory: { data: { type: 'territories', id: territoryId } },
+        },
+      },
+    })
+    return response?.data || null
+  }
+
   async listWinBackOffers(subscriptionId) {
     if (!subscriptionId) throw new Error('subscriptionId is required')
 

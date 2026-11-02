@@ -1,6 +1,6 @@
 import appStoreConnect from '@/lib/appStoreConnect'
 import { ok, fail } from '@/lib/http'
-import { DEFAULT_PPP_SETTINGS, PPP_TEMPLATE_INFO, computeTargetPrice, getTerritoryTemplate, pppMultiplier, snapToPricePoint } from '@/lib/pricingTemplate'
+import { DEFAULT_PPP_SETTINGS, PPP_TEMPLATE_INFO, computeTargetPrice, getTerritoryTemplate, pppMultiplier, snapToCharmPricePoint, snapToPricePoint } from '@/lib/pricingTemplate'
 
 const CACHE_TTL_MS = 30 * 60 * 1000
 const pricePointCache = new Map()
@@ -60,6 +60,12 @@ export async function GET(request, { params }) {
       const target = computeTargetPrice({ basePrice, baseProceeds, equalized, plr: template.plr, vat: template.vat, multiplier })
       const snapped = target ? snapToPricePoint(target, pricePointsByTerritory.get(equalized.territoryId)) : null
       const chosen = snapped || equalized
+      const territoryPoints = pricePointsByTerritory.get(equalized.territoryId)
+      // The US price is the one picked, so it is never re-snapped.
+      const isBase = equalized.territoryId === base.territoryId
+      const charmEqualized = isBase ? base : snapToCharmPricePoint(Number(equalized.customerPrice), territoryPoints) || equalized
+      const charmTarget = isBase ? base : target ? snapToCharmPricePoint(target, territoryPoints) || chosen : chosen
+      const pick = (point) => ({ pricePointId: point.id, customerPrice: point.customerPrice, proceeds: point.proceeds })
 
       return {
         territoryId: equalized.territoryId,
@@ -70,6 +76,12 @@ export async function GET(request, { params }) {
         vat: template.vat,
         multiplier,
         equalizedPrice: equalized.customerPrice,
+        equalizedPricePointId: equalized.id,
+        equalizedProceeds: equalized.proceeds,
+        // Charm-priced alternatives (x.99, 890, 49,000) for each mode.
+        charm: { equalized: pick(charmEqualized), ppp: pick(charmTarget) },
+        // Local price -> US dollars, using Apple's match of the US base price.
+        usdPerLocal: Number(equalized.customerPrice) > 0 ? basePrice / Number(equalized.customerPrice) : null,
         targetPrice: target,
         pricePointId: chosen.id,
         customerPrice: chosen.customerPrice,
