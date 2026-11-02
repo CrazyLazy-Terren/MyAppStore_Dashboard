@@ -64,6 +64,8 @@ export const reportAPI = {
       body: JSON.stringify(data),
     }),
   getKeywordById: (keywordId, range) => fetchAPI(withDateRange(`/reports/keywords?keywordId=${encodeURIComponent(keywordId)}`, range)),
+  getCountryReport: (range, appId) =>
+    fetchAPI(withDateRange(`/reports/countries${appId ? `?appId=${encodeURIComponent(appId)}` : ''}`, range)),
   getCustomReport: (data) =>
     fetchAPI('/reports/custom', {
       method: 'POST',
@@ -78,10 +80,33 @@ export const keywordAPI = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+  updateBid: (id, data) =>
+    fetchAPI(`/keywords/${encodeURIComponent(id)}/bid`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+}
+
+export const appStoreAnalyticsAPI = {
+  enable: (appIds) =>
+    fetchAPI('/appstore/analytics/enable', {
+      method: 'POST',
+      body: JSON.stringify({ appIds }),
+    }),
 }
 
 export const applicationAPI = {
   getAll: () => fetchAPI('/applications'),
+}
+
+export const dynamoDBAPI = {
+  listTables: () => fetchAPI('/dynamodb/tables'),
+  describeTable: (name) => fetchAPI(`/dynamodb/tables/${encodeURIComponent(name)}`),
+  getItems: (name, params = {}) => {
+    const searchParams = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''))
+    const query = searchParams.toString()
+    return fetchAPI(`/dynamodb/tables/${encodeURIComponent(name)}/items${query ? `?${query}` : ''}`)
+  },
 }
 
 export default fetchAPI

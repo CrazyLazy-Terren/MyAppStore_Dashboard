@@ -1,15 +1,18 @@
 {
-  "name": "apple-ads-client",
+  "name": "app-growth-console",
   "version": "1.0.0",
-  "description": "Apple Search Ads API Client with Frontend Dashboard",
+  "description": "Apple Ads, App Store Connect listings, and download analytics dashboard",
   "main": "next.config.mjs",
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_OPTIONS=--max-old-space-size=4096 next dev",
+    "dev:turbo": "NODE_OPTIONS=--max-old-space-size=4096 next dev --turbopack",
+    "dev:stable": "next build && next start",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "extract-public-key": "node scripts/extractPublicKey.js",
-    "generate-test-keys": "node scripts/generateKeyPair.js"
+    "generate-test-keys": "node scripts/generateKeyPair.js",
+    "build-ppp-template": "node scripts/buildPppTemplate.js"
   },
   "keywords": [
     "apple-search-ads",
@@ -20,11 +23,14 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1161.0",
+    "@aws-sdk/util-dynamodb": "^3.996.9",
+    "@google/genai": "^1.52.0",
     "dotenv": "^16.3.1",
     "jsonwebtoken": "^9.0.2",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest"
+    "next": "^15.5.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.1",

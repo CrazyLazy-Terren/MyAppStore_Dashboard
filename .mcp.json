@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "appstore-metadata": {
+      "command": "node",
+      "args": ["--no-warnings", "/Users/tianclin/Documents/Develop/Apple Ads/mcp/appstore-metadata.mjs"]
+    },
+    "apple-ads": {
+      "command": "node",
+      "args": ["--no-warnings", "/Users/tianclin/Documents/Develop/Apple Ads/mcp/apple-ads.mjs"]
+    }
+  }
+}

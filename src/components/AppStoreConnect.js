@@ -1,14 +1,110 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import SubscriptionWinBackOffers from './SubscriptionWinBackOffers'
+import { compareLocales, sortByLocale } from '@/lib/localeOrder'
 
-function localeHasExplicitRegion(locale) {
-  if (!locale) {
-    return false
+const APP_CLIP_LOCALIZATION_CREATE_STATES = ['PREPARE_FOR_SUBMISSION', 'DEVELOPER_REJECTED', 'REJECTED', 'METADATA_REJECTED', 'INVALID_BINARY']
+const APP_PREVIEW_TYPE_OPTIONS = [
+  { value: 'IPHONE_65', label: 'iPhone 6.5"' },
+  { value: 'IPHONE_61', label: 'iPhone 6.1"' },
+  { value: 'IPHONE_58', label: 'iPhone 5.8"' },
+  { value: 'IPHONE_55', label: 'iPhone 5.5"' },
+  { value: 'IPHONE_47', label: 'iPhone 4.7"' },
+  { value: 'IPAD_PRO_3GEN_129', label: 'iPad Pro 12.9" 3rd gen' },
+  { value: 'IPAD_PRO_3GEN_11', label: 'iPad Pro 11" 3rd gen' },
+  { value: 'IPAD_PRO_129', label: 'iPad Pro 12.9"' },
+  { value: 'IPAD_105', label: 'iPad 10.5"' },
+  { value: 'IPAD_97', label: 'iPad 9.7"' },
+]
+
+function getAppPreviewUploadKey(locale) {
+  return `upload:${locale}`
+}
+
+function getAppPreviewVideoRefKey(previewId) {
+  return `preview:${previewId}`
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0)
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '-'
   }
 
-  const normalizedLocale = locale.replace('_', '-')
-  return normalizedLocale.split('-').some((part) => /^[A-Z]{2}$/i.test(part))
+  const units = ['B', 'KB', 'MB', 'GB']
+  let nextValue = bytes
+  let unitIndex = 0
+
+  while (nextValue >= 1024 && unitIndex < units.length - 1) {
+    nextValue /= 1024
+    unitIndex += 1
+  }
+
+  return `${nextValue.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+function formatAppPreviewTypeLabel(value) {
+  const option = APP_PREVIEW_TYPE_OPTIONS.find((item) => item.value === value)
+  if (option) {
+    return option.label
+  }
+
+  return String(value || '')
+    .toLowerCase()
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function secondsToAppPreviewFrameTimeCode(value) {
+  const seconds = Number(value || 0)
+  const safeSeconds = Number.isFinite(seconds) && seconds > 0 ? seconds : 0
+  const totalFrames = Math.round(safeSeconds * 30)
+  const totalSeconds = Math.floor(totalFrames / 30)
+  const frames = totalFrames % 30
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const remainingSeconds = totalSeconds % 60
+
+  return [hours, minutes, remainingSeconds, frames].map((part) => String(part).padStart(2, '0')).join(':')
+}
+
+function getAppPreviewVideoUrl(videoUrl) {
+  if (!videoUrl) {
+    return ''
+  }
+
+  if (typeof videoUrl === 'string') {
+    return videoUrl
+  }
+
+  if (videoUrl.url) {
+    return videoUrl.url
+  }
+
+  if (videoUrl.templateUrl) {
+    return videoUrl.templateUrl
+      .replace(/\{w\}/g, String(videoUrl.width || 886))
+      .replace(/\{h\}/g, String(videoUrl.height || 1920))
+      .replace(/\{f\}/g, 'mp4')
+      .replace(/\{scale\}/g, '1')
+  }
+
+  return ''
+}
+
+function getAssetDeliveryStateLabel(assetDeliveryState) {
+  if (!assetDeliveryState) {
+    return ''
+  }
+
+  if (typeof assetDeliveryState === 'string') {
+    return assetDeliveryState
+  }
+
+  return assetDeliveryState.state || assetDeliveryState.errors?.[0]?.code || ''
 }
 
 function getLocaleScript(locale) {
@@ -20,6 +116,10 @@ function getLocaleScript(locale) {
   return normalizedLocale.split('-').find((part) => /^[A-Za-z]{4}$/.test(part)) || ''
 }
 
+function isAbortError(error) {
+  return error?.name === 'AbortError'
+}
+
 function formatLocaleLabel(locale) {
   if (!locale) {
     return 'Global'
@@ -28,39 +128,14 @@ function formatLocaleLabel(locale) {
   try {
     const normalizedLocale = locale.replace('_', '-')
     const languageDisplayName = new Intl.DisplayNames(['en'], { type: 'language' })
-    const regionDisplayName = new Intl.DisplayNames(['en'], { type: 'region' })
     const scriptDisplayName = new Intl.DisplayNames(['en'], { type: 'script' })
     const languageCode = normalizedLocale.split('-')[0]
     const languageName = languageDisplayName.of(languageCode) || languageCode.toUpperCase()
     const scriptCode = getLocaleScript(normalizedLocale)
     const scriptName = scriptCode ? scriptDisplayName.of(scriptCode) || scriptCode : ''
 
-    if (scriptName && localeHasExplicitRegion(normalizedLocale)) {
-      const regionCode = normalizedLocale
-        .split('-')
-        .find((part) => /^[A-Z]{2}$/i.test(part))
-        ?.toUpperCase()
-      const regionName = regionCode ? regionDisplayName.of(regionCode) : ''
-
-      if (regionName) {
-        return `${languageName} (${scriptName}, ${regionName})`
-      }
-    }
-
     if (scriptName) {
       return `${languageName} (${scriptName})`
-    }
-
-    if (localeHasExplicitRegion(normalizedLocale)) {
-      const regionCode = normalizedLocale
-        .split('-')
-        .find((part) => /^[A-Z]{2}$/i.test(part))
-        ?.toUpperCase()
-      const regionName = regionCode ? regionDisplayName.of(regionCode) : ''
-
-      if (regionName) {
-        return `${languageName} (${regionName})`
-      }
     }
 
     return languageName
@@ -106,12 +181,14 @@ function mergeLocalizationsByLocale(localizations) {
         description: currentAttributes.description || nextAttributes.description || '',
         whatsNew: currentAttributes.whatsNew || nextAttributes.whatsNew || '',
         keywords: currentAttributes.keywords || nextAttributes.keywords || '',
+        supportUrl: currentAttributes.supportUrl || nextAttributes.supportUrl || '',
+        marketingUrl: currentAttributes.marketingUrl || nextAttributes.marketingUrl || '',
         locale,
       },
     })
   }
 
-  return Array.from(merged.values())
+  return sortByLocale(Array.from(merged.values()))
 }
 
 function mergeSubscriptionLocalizationsByLocale(localizations, availableLocales = []) {
@@ -134,7 +211,7 @@ function mergeSubscriptionLocalizationsByLocale(localizations, availableLocales 
   const locales = new Set([...availableLocales.filter(Boolean), ...merged.keys()])
 
   return Array.from(locales)
-    .sort((left, right) => String(left).localeCompare(String(right)))
+    .sort(compareLocales)
     .map((locale) => {
       const existing = merged.get(locale)
 
@@ -171,7 +248,7 @@ function mergeSubscriptionGroupLocalizationsByLocale(localizations, availableLoc
   const locales = new Set([...availableLocales.filter(Boolean), ...merged.keys()])
 
   return Array.from(locales)
-    .sort((left, right) => String(left).localeCompare(String(right)))
+    .sort(compareLocales)
     .map((locale) => {
       const existing = merged.get(locale)
 
@@ -207,7 +284,7 @@ function mergeAppClipLocalizationsByLocale(localizations, availableLocales = [])
   const locales = new Set([...availableLocales.filter(Boolean), ...merged.keys()])
 
   return Array.from(locales)
-    .sort((left, right) => String(left).localeCompare(String(right)))
+    .sort(compareLocales)
     .map((locale) => {
       const existing = merged.get(locale)
 
@@ -221,6 +298,52 @@ function mergeAppClipLocalizationsByLocale(localizations, availableLocales = [])
         }
       )
     })
+}
+
+function getAppClipExperienceId(localization) {
+  return localization?.relationships?.appClipDefaultExperience?.data?.id || localization?.appClipDefaultExperience?.id || ''
+}
+
+function getAppClipExperienceVersion(defaultExperience) {
+  return defaultExperience?.releaseWithAppStoreVersion || null
+}
+
+function isEditableAppClipExperience(defaultExperience) {
+  const state = getAppClipExperienceVersion(defaultExperience)?.attributes?.appStoreState
+  return state ? APP_CLIP_LOCALIZATION_CREATE_STATES.includes(state) : false
+}
+
+function pickCurrentAppClipExperience(defaultExperiences = []) {
+  return defaultExperiences.find(isEditableAppClipExperience) || defaultExperiences.find((experience) => !getAppClipExperienceVersion(experience)) || null
+}
+
+function getAppClipExperienceSortValue(defaultExperience) {
+  const version = getAppClipExperienceVersion(defaultExperience)
+  const createdDate = version?.attributes?.createdDate
+  const parsedDate = createdDate ? new Date(createdDate).getTime() : 0
+  return Number.isFinite(parsedDate) ? parsedDate : 0
+}
+
+function buildLastAppClipMetadataByLocale(localizations = [], currentExperienceId = '') {
+  const sortedLocalizations = [...localizations].sort((left, right) => {
+    const leftDate = getAppClipExperienceSortValue(left?.appClipDefaultExperience)
+    const rightDate = getAppClipExperienceSortValue(right?.appClipDefaultExperience)
+    return rightDate - leftDate
+  })
+  const lastByLocale = {}
+
+  for (const localization of sortedLocalizations) {
+    const locale = localization?.attributes?.locale
+    const subtitle = localization?.attributes?.subtitle || ''
+    const experienceId = getAppClipExperienceId(localization)
+    if (!locale || !subtitle || experienceId === currentExperienceId || lastByLocale[locale]?.subtitle) {
+      continue
+    }
+
+    lastByLocale[locale] = { subtitle }
+  }
+
+  return lastByLocale
 }
 
 function normalizeKeywordsValue(value) {
@@ -266,12 +389,16 @@ function getFieldTranslationLimit(field) {
     return { maxChars: 30, strictLessThan: false }
   }
 
-  if (field === 'description' || field === 'subscription_description') {
+  if (field === 'description' || field === 'subscription_description' || field === 'whatsNew') {
     return { maxChars: 4000, strictLessThan: false }
   }
 
   if (field === 'keywords') {
     return { maxChars: 100, strictLessThan: false }
+  }
+
+  if (field === 'promotionalText') {
+    return { maxChars: 170, strictLessThan: false }
   }
 
   return null
@@ -283,6 +410,37 @@ function getComparableFieldValue(field, value) {
   }
 
   return value || ''
+}
+
+const SELECTED_APP_STORAGE_KEY = 'asc-selected-app'
+const FOCUS_REFRESH_MIN_INTERVAL_MS = 15000
+
+function getMetadataDraftsKey(appId, platform) {
+  return `asc-metadata-drafts:${appId}:${platform}`
+}
+
+function getLocalizationsSignature(localizations) {
+  return localizations.map((loc) => [loc?.attributes?.locale, loc?.id, loc?.versionLocalizationId, loc?.appInfoLocalizationId].join(':')).join('|')
+}
+
+function readStoredJson(key) {
+  try {
+    return JSON.parse(window.localStorage.getItem(key) || 'null')
+  } catch {
+    return null
+  }
+}
+
+function writeStoredJson(key, value) {
+  try {
+    if (value === null || value === undefined) {
+      window.localStorage.removeItem(key)
+    } else {
+      window.localStorage.setItem(key, JSON.stringify(value))
+    }
+  } catch {
+    // Storage can be unavailable or full; unsaved edits then only live in memory.
+  }
 }
 
 function getKeywordMatchesInText(text, keywordsValue) {
@@ -322,6 +480,7 @@ export default function AppStoreConnect() {
   // Step 2 — selected app + its localizations
   const [selectedApp, setSelectedApp] = useState(null)
   const [activeSectionTab, setActiveSectionTab] = useState('aso')
+  const [platform, setPlatform] = useState('IOS')
   const [versionMeta, setVersionMeta] = useState(null)
   const [localizations, setLocalizations] = useState([])
   const [localizationsLoading, setLocalizationsLoading] = useState(false)
@@ -340,6 +499,7 @@ export default function AppStoreConnect() {
   const [subscriptionTranslationSourceByLocale, setSubscriptionTranslationSourceByLocale] = useState({})
   const [translatingSubscriptionSectionField, setTranslatingSubscriptionSectionField] = useState(null)
   const [translatingSubscriptionFieldKey, setTranslatingSubscriptionFieldKey] = useState(null)
+  const [deletingSubscriptionLocale, setDeletingSubscriptionLocale] = useState(null)
   const [subscriptionGroupLocalizations, setSubscriptionGroupLocalizations] = useState([])
   const [subscriptionGroupLocalizationsLoading, setSubscriptionGroupLocalizationsLoading] = useState(false)
   const [subscriptionGroupLocalizationsError, setSubscriptionGroupLocalizationsError] = useState(null)
@@ -350,6 +510,7 @@ export default function AppStoreConnect() {
   const [subscriptionGroupTranslationSourceByLocale, setSubscriptionGroupTranslationSourceByLocale] = useState({})
   const [translatingSubscriptionGroupSectionField, setTranslatingSubscriptionGroupSectionField] = useState(null)
   const [translatingSubscriptionGroupFieldKey, setTranslatingSubscriptionGroupFieldKey] = useState(null)
+  const [deletingSubscriptionGroupLocale, setDeletingSubscriptionGroupLocale] = useState(null)
 
   // App Clips
   const [appClips, setAppClips] = useState([])
@@ -361,11 +522,29 @@ export default function AppStoreConnect() {
   const [appClipLocalizationsError, setAppClipLocalizationsError] = useState(null)
   const [appClipMetadataByLocale, setAppClipMetadataByLocale] = useState({})
   const [originalAppClipMetadataByLocale, setOriginalAppClipMetadataByLocale] = useState({})
+  const [lastAppClipMetadataByLocale, setLastAppClipMetadataByLocale] = useState({})
+  const [currentAppClipDefaultExperienceId, setCurrentAppClipDefaultExperienceId] = useState('')
   const [savingAppClip, setSavingAppClip] = useState(false)
   const [appClipMessage, setAppClipMessage] = useState(null)
+  const [copyingAppClipUsDefaults, setCopyingAppClipUsDefaults] = useState(false)
   const [appClipTranslationSourceByLocale, setAppClipTranslationSourceByLocale] = useState({})
   const [translatingAppClipSectionField, setTranslatingAppClipSectionField] = useState(null)
   const [translatingAppClipFieldKey, setTranslatingAppClipFieldKey] = useState(null)
+  const [deletingAppClipLocale, setDeletingAppClipLocale] = useState(null)
+
+  // App Previews
+  const [appPreviewVersionMeta, setAppPreviewVersionMeta] = useState(null)
+  const [appPreviewLocalizations, setAppPreviewLocalizations] = useState([])
+  const [appPreviewsLoading, setAppPreviewsLoading] = useState(false)
+  const [appPreviewsError, setAppPreviewsError] = useState(null)
+  const [appPreviewMessage, setAppPreviewMessage] = useState(null)
+  const [appPreviewDrafts, setAppPreviewDrafts] = useState({})
+  const [appPreviewFilesByLocale, setAppPreviewFilesByLocale] = useState({})
+  const [appPreviewLocalVideoUrlsByLocale, setAppPreviewLocalVideoUrlsByLocale] = useState({})
+  const [uploadingAppPreviewKey, setUploadingAppPreviewKey] = useState(null)
+  const [savingAppPreviewCoverId, setSavingAppPreviewCoverId] = useState(null)
+  const appPreviewVideoRefs = useRef({})
+  const appPreviewObjectUrlsRef = useRef(new Set())
 
   // Step 3 — edit form
   const [metadataByLocale, setMetadataByLocale] = useState({})
@@ -374,6 +553,7 @@ export default function AppStoreConnect() {
   const [translationSourceByLocale, setTranslationSourceByLocale] = useState({})
   const [translatingSectionField, setTranslatingSectionField] = useState(null)
   const [translatingFieldKey, setTranslatingFieldKey] = useState(null)
+  const [deletingLocale, setDeletingLocale] = useState(null)
   const [keywordSuggestionAdamId, setKeywordSuggestionAdamId] = useState('')
   const [keywordSuggestionSeed, setKeywordSuggestionSeed] = useState('')
   const [keywordDraftByLocale, setKeywordDraftByLocale] = useState({})
@@ -387,6 +567,9 @@ export default function AppStoreConnect() {
   const [stopRequested, setStopRequested] = useState(false)
   const stopRequestedRef = useRef(false)
   const activeRequestControllerRef = useRef(null)
+  // Storage key of the app/platform whose unsaved edits are currently loaded, or null while loading.
+  const metadataDraftsKeyRef = useRef(null)
+  const lastLocalizationsLoadRef = useRef(0)
 
   const clearStopRequested = () => {
     stopRequestedRef.current = false
@@ -413,12 +596,15 @@ export default function AppStoreConnect() {
   }
 
   const loadSelectedAppLocalizations = async (appId, options = {}) => {
-    const { clearExisting = false, resetMessage = false } = options
+    const { clearExisting = false, resetMessage = false, silent = false, signal } = options
 
-    setLocalizationsLoading(true)
-    setLocalizationsError(null)
+    if (!silent) {
+      setLocalizationsLoading(true)
+      setLocalizationsError(null)
+    }
 
     if (clearExisting) {
+      metadataDraftsKeyRef.current = null
       setLocalizations([])
       setVersionMeta(null)
       setMetadataByLocale({})
@@ -431,12 +617,16 @@ export default function AppStoreConnect() {
     }
 
     try {
-      const res = await fetch(`/api/appstore/apps/${appId}/localizations`)
+      const res = await fetch(`/api/appstore/apps/${appId}/localizations?platform=${platform}`, { signal })
       const json = await res.json()
       if (!res.ok) throw new Error(json?.error?.message || 'Failed to load localizations')
+      if (signal?.aborted) return
+
       const locs = mergeLocalizationsByLocale(json.data || [])
       setVersionMeta(json.meta || null)
-      setLocalizations(locs)
+      // A background refresh keeps the same array when only text changed, so the subscription and
+      // App Clip editors keyed on it are not reloaded underneath unsaved edits.
+      setLocalizations((previous) => (silent && getLocalizationsSignature(previous) === getLocalizationsSignature(locs) ? previous : locs))
       const nextMetadataByLocale = locs.reduce((acc, loc) => {
         const locale = loc?.attributes?.locale
         if (locale) {
@@ -447,27 +637,127 @@ export default function AppStoreConnect() {
             promotionalText: loc?.attributes?.promotionalText || '',
             description: loc?.attributes?.description || '',
             whatsNew: loc?.attributes?.whatsNew || '',
+            supportUrl: loc?.attributes?.supportUrl || '',
+            marketingUrl: loc?.attributes?.marketingUrl || '',
           }
         }
         return acc
       }, {})
-      setMetadataByLocale(nextMetadataByLocale)
+
+      // Unsaved edits win over the server text; everything else follows App Store Connect.
+      const draftsKey = getMetadataDraftsKey(appId, platform)
+      const drafts = readStoredJson(draftsKey) || {}
+      const editedMetadataByLocale = { ...nextMetadataByLocale }
+      let restoredLocaleCount = 0
+      for (const [locale, fields] of Object.entries(drafts)) {
+        if (!nextMetadataByLocale[locale]) {
+          continue
+        }
+
+        editedMetadataByLocale[locale] = { ...nextMetadataByLocale[locale], ...fields }
+        restoredLocaleCount += 1
+      }
+
+      setMetadataByLocale(editedMetadataByLocale)
       setOriginalMetadataByLocale(nextMetadataByLocale)
+      metadataDraftsKeyRef.current = draftsKey
+      lastLocalizationsLoadRef.current = Date.now()
+      if (clearExisting && restoredLocaleCount > 0) {
+        setMessage({
+          type: 'success',
+          text: `Restored unsaved edits for ${restoredLocaleCount} locale${restoredLocaleCount === 1 ? '' : 's'}. Use Discard edits to drop them.`,
+        })
+      }
+
       if (locs.length > 0) {
         const availableLocales = locs.map((loc) => loc?.attributes?.locale).filter(Boolean)
         const englishLocale = getEnglishSourceLocale(availableLocales)
-        setTranslationSourceByLocale(
+        setTranslationSourceByLocale((previous) =>
           availableLocales.reduce((acc, targetLocale) => {
-            acc[targetLocale] = englishLocale || pickDefaultSourceLocale(availableLocales, targetLocale)
+            acc[targetLocale] = previous[targetLocale] || englishLocale || pickDefaultSourceLocale(availableLocales, targetLocale)
             return acc
           }, {})
         )
       }
     } catch (err) {
+      if (isAbortError(err) || silent) {
+        return
+      }
+
       setLocalizationsError(err.message)
       throw err
     } finally {
-      setLocalizationsLoading(false)
+      if (!signal?.aborted) {
+        setLocalizationsLoading(false)
+      }
+    }
+  }
+
+  const loadSelectedAppPreviews = async (appId, options = {}) => {
+    const { clearExisting = false, resetMessage = false, signal } = options
+
+    setAppPreviewsLoading(true)
+    setAppPreviewsError(null)
+
+    if (clearExisting) {
+      setAppPreviewVersionMeta(null)
+      setAppPreviewLocalizations([])
+      setAppPreviewDrafts({})
+      setAppPreviewFilesByLocale({})
+      setAppPreviewLocalVideoUrlsByLocale((previous) => {
+        for (const url of Object.values(previous)) {
+          if (url) {
+            URL.revokeObjectURL(url)
+            appPreviewObjectUrlsRef.current.delete(url)
+          }
+        }
+        return {}
+      })
+    }
+
+    if (resetMessage) {
+      setAppPreviewMessage(null)
+    }
+
+    try {
+      const res = await fetch(`/api/appstore/apps/${appId}/previews?platform=${platform}`, { signal })
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(json?.error?.message || 'Failed to load app previews')
+      }
+      if (signal?.aborted) return
+
+      setAppPreviewVersionMeta(json.meta || null)
+      setAppPreviewLocalizations(json.data || [])
+      setAppPreviewDrafts((previous) => {
+        const next = { ...previous }
+
+        for (const localization of json.data || []) {
+          for (const previewSet of localization?.appPreviewSets || []) {
+            for (const preview of previewSet?.appPreviews || []) {
+              if (preview?.id) {
+                next[`cover:${preview.id}`] = {
+                  ...(typeof next[`cover:${preview.id}`] === 'object' ? next[`cover:${preview.id}`] : {}),
+                  previewFrameTimeCode: preview?.attributes?.previewFrameTimeCode || '',
+                }
+              }
+            }
+          }
+        }
+
+        return next
+      })
+    } catch (err) {
+      if (isAbortError(err)) {
+        return
+      }
+
+      setAppPreviewsError(err.message)
+      throw err
+    } finally {
+      if (!signal?.aborted) {
+        setAppPreviewsLoading(false)
+      }
     }
   }
 
@@ -490,25 +780,51 @@ export default function AppStoreConnect() {
 
   // Load app list on mount
   useEffect(() => {
+    const controller = new AbortController()
+
     const load = async () => {
       try {
-        const res = await fetch('/api/appstore/apps')
+        const res = await fetch('/api/appstore/apps', { signal: controller.signal })
         const json = await res.json()
         if (!res.ok) throw new Error(json?.error?.message || 'Failed to load apps')
+        if (controller.signal.aborted) return
         setApps(json.data || [])
+        const storedAppId = readStoredJson(SELECTED_APP_STORAGE_KEY)
+        const storedApp = (json.data || []).find((app) => app.id === storedAppId)
+        if (storedApp) {
+          setSelectedApp((previous) => previous || storedApp)
+        }
       } catch (err) {
+        if (isAbortError(err)) return
         setAppsError(err.message)
       } finally {
-        setAppsLoading(false)
+        if (!controller.signal.aborted) {
+          setAppsLoading(false)
+        }
       }
     }
     load()
+
+    return () => {
+      controller.abort()
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      for (const url of appPreviewObjectUrlsRef.current) {
+        URL.revokeObjectURL(url)
+      }
+      appPreviewObjectUrlsRef.current.clear()
+    }
   }, [])
 
   // Load localizations whenever selected app changes
   useEffect(() => {
     if (selectedApp) {
+      writeStoredJson(SELECTED_APP_STORAGE_KEY, selectedApp.id)
       setActiveSectionTab('aso')
+      setPlatform('IOS')
       setKeywordSuggestionAdamId('')
       setKeywordSuggestions([])
       setKeywordSuggestionSeed('')
@@ -516,6 +832,21 @@ export default function AppStoreConnect() {
       setKeywordSuggestionsError(null)
       setKeywordSuggestionAutoFillNote(null)
       setKeywordDraftByLocale({})
+      setAppPreviewVersionMeta(null)
+      setAppPreviewLocalizations([])
+      setAppPreviewsError(null)
+      setAppPreviewMessage(null)
+      setAppPreviewDrafts({})
+      setAppPreviewFilesByLocale({})
+      setAppPreviewLocalVideoUrlsByLocale((previous) => {
+        for (const url of Object.values(previous)) {
+          if (url) {
+            URL.revokeObjectURL(url)
+            appPreviewObjectUrlsRef.current.delete(url)
+          }
+        }
+        return {}
+      })
     }
   }, [selectedApp])
 
@@ -524,6 +855,7 @@ export default function AppStoreConnect() {
       return
     }
 
+    const controller = new AbortController()
     const selectedAppName = selectedApp?.attributes?.name || ''
     if (!selectedAppName.trim()) {
       setKeywordSuggestionAutoFillNote('App name is unavailable, so suggestions will run by keyword only.')
@@ -534,7 +866,7 @@ export default function AppStoreConnect() {
 
     const loadApplications = async () => {
       try {
-        const res = await fetch('/api/applications')
+        const res = await fetch('/api/applications', { signal: controller.signal })
         const json = await res.json()
 
         if (!res.ok) {
@@ -568,6 +900,10 @@ export default function AppStoreConnect() {
           return
         }
 
+        if (isAbortError(error)) {
+          return
+        }
+
         setKeywordSuggestionAutoFillNote(`Auto-fill unavailable: ${error.message}`)
       }
     }
@@ -576,26 +912,78 @@ export default function AppStoreConnect() {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [selectedApp])
 
   useEffect(() => {
     if (!selectedApp) return
+    const controller = new AbortController()
     const load = async () => {
       try {
-        await loadSelectedAppLocalizations(selectedApp.id, { clearExisting: true, resetMessage: true })
+        await loadSelectedAppLocalizations(selectedApp.id, { clearExisting: true, resetMessage: true, signal: controller.signal })
       } catch (err) {
+        if (isAbortError(err)) return
         setLocalizationsError(err.message)
       }
     }
     load()
-  }, [selectedApp])
+
+    return () => {
+      controller.abort()
+    }
+  }, [selectedApp, platform])
+
+  // Keep unsaved edits in localStorage so they survive a page reload or a background refresh.
+  useEffect(() => {
+    if (!selectedApp) {
+      return
+    }
+
+    const draftsKey = getMetadataDraftsKey(selectedApp.id, platform)
+    if (metadataDraftsKeyRef.current !== draftsKey) {
+      return
+    }
+
+    const drafts = {}
+    for (const [locale, fields] of Object.entries(metadataByLocale)) {
+      for (const [field, value] of Object.entries(fields || {})) {
+        if (getComparableFieldValue(field, value) !== getComparableFieldValue(field, originalMetadataByLocale[locale]?.[field])) {
+          drafts[locale] = { ...drafts[locale], [field]: value }
+        }
+      }
+    }
+
+    writeStoredJson(draftsKey, Object.keys(drafts).length > 0 ? drafts : null)
+  }, [selectedApp, platform, metadataByLocale, originalMetadataByLocale])
+
+  useEffect(() => {
+    if (!selectedApp || activeSectionTab !== 'previews') {
+      return
+    }
+
+    const controller = new AbortController()
+    const load = async () => {
+      try {
+        await loadSelectedAppPreviews(selectedApp.id, { clearExisting: true, resetMessage: true, signal: controller.signal })
+      } catch (err) {
+        if (isAbortError(err)) return
+        setAppPreviewsError(err.message)
+      }
+    }
+    load()
+
+    return () => {
+      controller.abort()
+    }
+  }, [selectedApp, activeSectionTab, platform])
 
   useEffect(() => {
     if (!selectedApp) {
       return
     }
 
+    const controller = new AbortController()
     const load = async () => {
       setSubscriptionsLoading(true)
       setSubscriptionsError(null)
@@ -611,23 +999,31 @@ export default function AppStoreConnect() {
       setSubscriptionGroupMessage(null)
 
       try {
-        const res = await fetch(`/api/appstore/apps/${selectedApp.id}/subscriptions`)
+        const res = await fetch(`/api/appstore/apps/${selectedApp.id}/subscriptions`, { signal: controller.signal })
         const json = await res.json()
         if (!res.ok) {
           throw new Error(json?.error?.message || 'Failed to load subscriptions')
         }
+        if (controller.signal.aborted) return
 
         const nextSubscriptions = json.data || []
         setSubscriptions(nextSubscriptions)
         setSelectedSubscription(nextSubscriptions[0] || null)
       } catch (err) {
+        if (isAbortError(err)) return
         setSubscriptionsError(err.message)
       } finally {
-        setSubscriptionsLoading(false)
+        if (!controller.signal.aborted) {
+          setSubscriptionsLoading(false)
+        }
       }
     }
 
     load()
+
+    return () => {
+      controller.abort()
+    }
   }, [selectedApp])
 
   useEffect(() => {
@@ -637,10 +1033,13 @@ export default function AppStoreConnect() {
       setAppClipLocalizations([])
       setAppClipMetadataByLocale({})
       setOriginalAppClipMetadataByLocale({})
+      setLastAppClipMetadataByLocale({})
+      setCurrentAppClipDefaultExperienceId('')
       setAppClipTranslationSourceByLocale({})
       return
     }
 
+    const controller = new AbortController()
     const load = async () => {
       setAppClipsLoading(true)
       setAppClipsError(null)
@@ -649,27 +1048,37 @@ export default function AppStoreConnect() {
       setAppClipLocalizations([])
       setAppClipMetadataByLocale({})
       setOriginalAppClipMetadataByLocale({})
+      setLastAppClipMetadataByLocale({})
+      setCurrentAppClipDefaultExperienceId('')
       setAppClipTranslationSourceByLocale({})
       setAppClipMessage(null)
 
       try {
-        const res = await fetch(`/api/appstore/apps/${selectedApp.id}/appclips`)
+        const res = await fetch(`/api/appstore/apps/${selectedApp.id}/appclips`, { signal: controller.signal })
         const json = await res.json()
         if (!res.ok) {
           throw new Error(json?.error?.message || 'Failed to load app clips')
         }
+        if (controller.signal.aborted) return
 
         const nextAppClips = json.data || []
         setAppClips(nextAppClips)
         setSelectedAppClip(nextAppClips[0] || null)
       } catch (err) {
+        if (isAbortError(err)) return
         setAppClipsError(err.message)
       } finally {
-        setAppClipsLoading(false)
+        if (!controller.signal.aborted) {
+          setAppClipsLoading(false)
+        }
       }
     }
 
     load()
+
+    return () => {
+      controller.abort()
+    }
   }, [selectedApp])
 
   useEffect(() => {
@@ -677,26 +1086,38 @@ export default function AppStoreConnect() {
       setAppClipLocalizations([])
       setAppClipMetadataByLocale({})
       setOriginalAppClipMetadataByLocale({})
+      setLastAppClipMetadataByLocale({})
+      setCurrentAppClipDefaultExperienceId('')
       setAppClipTranslationSourceByLocale({})
       return
     }
 
+    const controller = new AbortController()
     const load = async () => {
       setAppClipLocalizationsLoading(true)
       setAppClipLocalizationsError(null)
       setAppClipMessage(null)
 
       try {
-        const res = await fetch(`/api/appstore/appclips/${selectedAppClip.id}/localizations`)
+        const res = await fetch(`/api/appstore/appclips/${selectedAppClip.id}/localizations`, { signal: controller.signal })
         const json = await res.json()
         if (!res.ok) {
           throw new Error(json?.error?.message || 'Failed to load app clip localizations')
         }
+        if (controller.signal.aborted) return
 
         const nextLocalizations = json.data || []
+        const defaultExperiences = json?.meta?.defaultExperiences || []
+        const currentExperience = pickCurrentAppClipExperience(defaultExperiences)
+        const currentExperienceId = currentExperience?.id || ''
+        setCurrentAppClipDefaultExperienceId(currentExperienceId)
         const availableLocales = localizations.map((loc) => loc?.attributes?.locale).filter(Boolean)
-        const mergedByLocale = mergeAppClipLocalizationsByLocale(nextLocalizations, availableLocales)
+        const currentLocalizations = currentExperienceId
+          ? nextLocalizations.filter((localization) => getAppClipExperienceId(localization) === currentExperienceId)
+          : nextLocalizations
+        const mergedByLocale = mergeAppClipLocalizationsByLocale(currentLocalizations, availableLocales)
         setAppClipLocalizations(mergedByLocale)
+        setLastAppClipMetadataByLocale(buildLastAppClipMetadataByLocale(nextLocalizations, currentExperienceId))
         const metadataMap = {}
         const originalMetadataMap = {}
 
@@ -728,13 +1149,20 @@ export default function AppStoreConnect() {
           )
         }
       } catch (err) {
+        if (isAbortError(err)) return
         setAppClipLocalizationsError(err.message)
       } finally {
-        setAppClipLocalizationsLoading(false)
+        if (!controller.signal.aborted) {
+          setAppClipLocalizationsLoading(false)
+        }
       }
     }
 
     load()
+
+    return () => {
+      controller.abort()
+    }
   }, [selectedAppClip, localizations])
 
   useEffect(() => {
@@ -748,17 +1176,19 @@ export default function AppStoreConnect() {
       return
     }
 
+    const controller = new AbortController()
     const load = async () => {
       setSubscriptionLocalizationsLoading(true)
       setSubscriptionLocalizationsError(null)
       setSubscriptionMessage(null)
 
       try {
-        const res = await fetch(`/api/appstore/subscriptions/${selectedSubscription.id}/localizations`)
+        const res = await fetch(`/api/appstore/subscriptions/${selectedSubscription.id}/localizations`, { signal: controller.signal })
         const json = await res.json()
         if (!res.ok) {
           throw new Error(json?.error?.message || 'Failed to load subscription localizations')
         }
+        if (controller.signal.aborted) return
 
         const availableLocales = localizations.map((loc) => loc?.attributes?.locale).filter(Boolean)
         const mergedLocalizations = mergeSubscriptionLocalizationsByLocale(json.data || [], availableLocales)
@@ -788,13 +1218,20 @@ export default function AppStoreConnect() {
           )
         }
       } catch (err) {
+        if (isAbortError(err)) return
         setSubscriptionLocalizationsError(err.message)
       } finally {
-        setSubscriptionLocalizationsLoading(false)
+        if (!controller.signal.aborted) {
+          setSubscriptionLocalizationsLoading(false)
+        }
       }
     }
 
     load()
+
+    return () => {
+      controller.abort()
+    }
   }, [selectedSubscription, localizations])
 
   useEffect(() => {
@@ -807,17 +1244,19 @@ export default function AppStoreConnect() {
       return
     }
 
+    const controller = new AbortController()
     const load = async () => {
       setSubscriptionGroupLocalizationsLoading(true)
       setSubscriptionGroupLocalizationsError(null)
       setSubscriptionGroupMessage(null)
 
       try {
-        const res = await fetch(`/api/appstore/subscription-groups/${subscriptionGroupId}/localizations`)
+        const res = await fetch(`/api/appstore/subscription-groups/${subscriptionGroupId}/localizations`, { signal: controller.signal })
         const json = await res.json()
         if (!res.ok) {
           throw new Error(json?.error?.message || 'Failed to load subscription group localizations')
         }
+        if (controller.signal.aborted) return
 
         const availableLocales = localizations.map((loc) => loc?.attributes?.locale).filter(Boolean)
         const mergedLocalizations = mergeSubscriptionGroupLocalizationsByLocale(json.data || [], availableLocales)
@@ -847,13 +1286,20 @@ export default function AppStoreConnect() {
           )
         }
       } catch (err) {
+        if (isAbortError(err)) return
         setSubscriptionGroupLocalizationsError(err.message)
       } finally {
-        setSubscriptionGroupLocalizationsLoading(false)
+        if (!controller.signal.aborted) {
+          setSubscriptionGroupLocalizationsLoading(false)
+        }
       }
     }
 
     load()
+
+    return () => {
+      controller.abort()
+    }
   }, [selectedSubscription, localizations])
 
   const handleMetadataChange = (locale, field, value) => {
@@ -869,10 +1315,33 @@ export default function AppStoreConnect() {
           promotionalText: '',
           description: '',
           whatsNew: '',
+          supportUrl: '',
+          marketingUrl: '',
         }),
         [field]: nextValue,
       },
     }))
+    setMessage(null)
+  }
+
+  const handleCopyFieldToAllLocales = (field, sourceLocale) => {
+    const sourceValue = metadataByLocale[sourceLocale]?.[field] || ''
+    const targetLocales = localizations.map((loc) => loc?.attributes?.locale).filter((locale) => locale && locale !== sourceLocale)
+
+    if (targetLocales.length === 0) {
+      return
+    }
+
+    setMetadataByLocale((previous) => {
+      const next = { ...previous }
+      for (const locale of targetLocales) {
+        next[locale] = {
+          ...(previous[locale] || {}),
+          [field]: sourceValue,
+        }
+      }
+      return next
+    })
     setMessage(null)
   }
 
@@ -946,6 +1415,45 @@ export default function AppStoreConnect() {
     setAppClipMessage(null)
   }
 
+  const pasteLastAppClipSubtitle = (locale) => {
+    const lastSubtitle = lastAppClipMetadataByLocale[locale]?.subtitle || ''
+    if (!lastSubtitle) {
+      setAppClipMessage({ type: 'error', text: `No previous App Clip subtitle found for ${locale}.` })
+      return
+    }
+
+    handleAppClipMetadataChange(locale, 'subtitle', lastSubtitle)
+    setAppClipMessage({ type: 'success', text: `Pasted last version subtitle for ${locale}.` })
+  }
+
+  const pasteLastAppClipSubtitles = () => {
+    const locales = appClipLocalizations.map((loc) => loc?.attributes?.locale).filter(Boolean)
+    let copied = 0
+
+    setAppClipMetadataByLocale((previous) => {
+      const next = { ...previous }
+      for (const locale of locales) {
+        const lastSubtitle = lastAppClipMetadataByLocale[locale]?.subtitle || ''
+        if (!lastSubtitle) {
+          continue
+        }
+
+        copied += 1
+        next[locale] = {
+          ...(next[locale] || { subtitle: '' }),
+          subtitle: lastSubtitle,
+        }
+      }
+      return next
+    })
+
+    setAppClipMessage(
+      copied > 0
+        ? { type: 'success', text: `Pasted last version subtitle for ${copied} locale${copied === 1 ? '' : 's'}.` }
+        : { type: 'error', text: 'No previous App Clip subtitles found to paste.' }
+    )
+  }
+
   const isAppClipFieldChanged = (locale, field) => {
     return String(appClipMetadataByLocale[locale]?.[field] || '') !== String(originalAppClipMetadataByLocale[locale]?.[field] || '')
   }
@@ -967,7 +1475,7 @@ export default function AppStoreConnect() {
   const getChangedMetadataForLocale = (locale) => {
     const changedMetadata = {}
 
-    for (const field of ['name', 'subtitle', 'keywords', 'promotionalText', 'description', 'whatsNew']) {
+    for (const field of ['name', 'subtitle', 'keywords', 'promotionalText', 'description', 'whatsNew', 'supportUrl', 'marketingUrl']) {
       if (!isFieldChanged(locale, field)) {
         continue
       }
@@ -995,6 +1503,105 @@ export default function AppStoreConnect() {
       promotionalText: metadataByLocale[locale]?.promotionalText || '',
       description: metadataByLocale[locale]?.description || '',
       whatsNew: metadataByLocale[locale]?.whatsNew || '',
+      supportUrl: metadataByLocale[locale]?.supportUrl || '',
+      marketingUrl: metadataByLocale[locale]?.marketingUrl || '',
+    }
+  }
+
+  const commitUpdatedAppMetadata = (updatedLocales) => {
+    const locales = new Set(updatedLocales.filter(Boolean))
+
+    if (locales.size === 0) {
+      return
+    }
+
+    setOriginalMetadataByLocale((previous) => {
+      const next = { ...previous }
+      for (const locale of locales) {
+        next[locale] = {
+          name: metadataByLocale[locale]?.name || '',
+          subtitle: metadataByLocale[locale]?.subtitle || '',
+          keywords: metadataByLocale[locale]?.keywords || '',
+          promotionalText: metadataByLocale[locale]?.promotionalText || '',
+          description: metadataByLocale[locale]?.description || '',
+          whatsNew: metadataByLocale[locale]?.whatsNew || '',
+          supportUrl: metadataByLocale[locale]?.supportUrl || '',
+          marketingUrl: metadataByLocale[locale]?.marketingUrl || '',
+        }
+      }
+      return next
+    })
+
+    setLocalizations((previous) =>
+      previous.map((loc) => {
+        const locale = loc?.attributes?.locale
+        if (!locales.has(locale)) {
+          return loc
+        }
+
+        return {
+          ...loc,
+          attributes: {
+            ...(loc?.attributes || {}),
+            name: metadataByLocale[locale]?.name || '',
+            subtitle: metadataByLocale[locale]?.subtitle || '',
+            keywords: metadataByLocale[locale]?.keywords || '',
+            promotionalText: metadataByLocale[locale]?.promotionalText || '',
+            description: metadataByLocale[locale]?.description || '',
+            whatsNew: metadataByLocale[locale]?.whatsNew || '',
+            supportUrl: metadataByLocale[locale]?.supportUrl || '',
+            marketingUrl: metadataByLocale[locale]?.marketingUrl || '',
+            locale,
+          },
+        }
+      })
+    )
+  }
+
+  const handleDeleteLocalization = async (locale) => {
+    const loc = localizations.find((item) => item?.attributes?.locale === locale)
+    if (!loc || !selectedApp?.id) {
+      return
+    }
+
+    const versionLocalizationId = loc.versionLocalizationId || null
+    const appInfoLocalizationId = loc.appInfoLocalizationId || null
+
+    if (!versionLocalizationId && !appInfoLocalizationId) {
+      setMessage({ type: 'error', text: `No removable localization found for ${locale}.` })
+      return
+    }
+
+    if (!window.confirm(`Remove the ${locale} localization from App Store Connect? This cannot be undone.`)) {
+      return
+    }
+
+    setDeletingLocale(locale)
+    setMessage(null)
+
+    try {
+      const res = await fetch(`/api/appstore/apps/${selectedApp.id}/localizations`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versionLocalizationId, appInfoLocalizationId }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'Failed to remove localization')
+
+      setLocalizations((previous) => previous.filter((item) => item?.attributes?.locale !== locale))
+      setMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setOriginalMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setMessage({ type: 'success', text: `Removed ${locale} localization.` })
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message })
+    } finally {
+      setDeletingLocale(null)
     }
   }
 
@@ -1033,7 +1640,9 @@ export default function AppStoreConnect() {
       .filter((locale) => Object.keys(getChangedMetadataForLocale(locale)).length > 0)
   }, [localizations, metadataByLocale, originalMetadataByLocale])
   const hasChangedVersionMetadata = useMemo(() => {
-    return changedLocales.some((locale) => ['keywords', 'promotionalText', 'description', 'whatsNew'].some((field) => isFieldChanged(locale, field)))
+    return changedLocales.some((locale) =>
+      ['keywords', 'promotionalText', 'description', 'whatsNew', 'supportUrl', 'marketingUrl'].some((field) => isFieldChanged(locale, field))
+    )
   }, [changedLocales, metadataByLocale, originalMetadataByLocale])
 
   const changedSubscriptionLocales = useMemo(() => {
@@ -1098,11 +1707,40 @@ export default function AppStoreConnect() {
   const hasDescriptionLimitError = Object.values(descriptionLimitByLocale).some(Boolean)
   const hasAnyMetadataLimitError = hasNameLimitError || hasSubtitleLimitError || hasKeywordsLimitError || hasDescriptionLimitError
   const hasBlockingAction = savingAll || translatingSectionField !== null || translatingFieldKey !== null
+
+  // Pick up changes made outside this page (App Store Connect, the MCP agent) when the tab is looked at again.
+  useEffect(() => {
+    if (!selectedApp || hasBlockingAction || localizationsLoading) {
+      return
+    }
+
+    const controller = new AbortController()
+    let refreshing = false
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible' || refreshing || Date.now() - lastLocalizationsLoadRef.current < FOCUS_REFRESH_MIN_INTERVAL_MS) {
+        return
+      }
+
+      refreshing = true
+      await loadSelectedAppLocalizations(selectedApp.id, { silent: true, signal: controller.signal })
+      refreshing = false
+    }
+
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+
+    return () => {
+      controller.abort()
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [selectedApp, platform, hasBlockingAction, localizationsLoading])
   const progressPercent = progress ? Math.min(100, Math.max(0, Math.round((progress.current / Math.max(progress.total, 1)) * 100))) : 0
 
-  const saveLocaleMetadata = async (locale, signal) => {
-    const changedMetadata = getChangedMetadataForLocale(locale)
-    if (Object.keys(changedMetadata).length === 0) {
+  const saveLocaleMetadata = async (locale, signal, options = {}) => {
+    const { forceAllFields = false } = options
+    const metadata = forceAllFields ? getExportMetadataForLocale(locale) : getChangedMetadataForLocale(locale)
+    if (Object.keys(metadata).length === 0) {
       return false
     }
 
@@ -1113,7 +1751,8 @@ export default function AppStoreConnect() {
       body: JSON.stringify({
         appId: selectedApp.id,
         locale,
-        ...changedMetadata,
+        platform,
+        ...metadata,
       }),
     })
 
@@ -1125,7 +1764,7 @@ export default function AppStoreConnect() {
     return true
   }
 
-  const handleSaveAllLocales = async () => {
+  const handleSaveAllLocales = async ({ forceAll = false } = {}) => {
     if (hasNameLimitError) {
       setMessage({ type: 'error', text: 'App Name must be less than or equal to 30 characters for all locales.' })
       return
@@ -1146,14 +1785,14 @@ export default function AppStoreConnect() {
       return
     }
 
-    const localesToUpdate = [...changedLocales]
+    const localesToUpdate = forceAll ? localizations.map((loc) => loc?.attributes?.locale).filter(Boolean) : [...changedLocales]
 
     if (localesToUpdate.length === 0) {
-      setMessage({ type: 'error', text: 'No changed locales to update.' })
+      setMessage({ type: 'error', text: forceAll ? 'No locales available to update.' : 'No changed locales to update.' })
       return
     }
 
-    if (!versionMeta?.versionId && hasChangedVersionMetadata) {
+    if (!versionMeta?.versionId && (forceAll || hasChangedVersionMetadata)) {
       setMessage({
         type: 'error',
         text: "Keywords, Promotional Text, Description, and What's New require an editable App Store version. Create or open a version in Prepare for Submission first.",
@@ -1165,7 +1804,7 @@ export default function AppStoreConnect() {
     setSavingAll(true)
     setProgress({
       type: 'update',
-      label: 'Updating changed locales',
+      label: forceAll ? 'Re-updating all locales' : 'Updating changed locales',
       current: 0,
       total: localesToUpdate.length,
     })
@@ -1180,23 +1819,28 @@ export default function AppStoreConnect() {
         }
 
         const controller = createRequestController()
-        await saveLocaleMetadata(locale, controller.signal)
+        await saveLocaleMetadata(locale, controller.signal, { forceAllFields: forceAll })
         clearRequestController(controller)
         updatedLocales.push(locale)
         setProgress({
           type: 'update',
-          label: `Updating changed locales: ${locale}`,
+          label: `${forceAll ? 'Re-updating all locales' : 'Updating changed locales'}: ${locale}`,
           current: index + 1,
           total: localesToUpdate.length,
         })
       }
 
-      if (updatedLocales.length > 0 && updatedLocales.length === localesToUpdate.length) {
-        await loadSelectedAppLocalizations(selectedApp.id)
+      if (updatedLocales.length > 0) {
+        commitUpdatedAppMetadata(updatedLocales)
       }
 
       if (!stopRequestedRef.current) {
-        setMessage({ type: 'success', text: `Updated ${updatedLocales.length} changed locale${updatedLocales.length === 1 ? '' : 's'} successfully.` })
+        setMessage({
+          type: 'success',
+          text: forceAll
+            ? `Re-updated ${updatedLocales.length} locale${updatedLocales.length === 1 ? '' : 's'} successfully.`
+            : `Updated ${updatedLocales.length} changed locale${updatedLocales.length === 1 ? '' : 's'} successfully.`,
+        })
       }
     } catch (err) {
       if (err?.name === 'AbortError' && stopRequestedRef.current) {
@@ -1225,37 +1869,28 @@ export default function AppStoreConnect() {
       return
     }
 
+    const targetLocales = locales.filter((locale) => locale !== englishSourceLocale)
+
     clearStopRequested()
     setTranslatingSectionField(field)
     setProgress({
       type: 'translate',
       label: `Translating ${field}`,
       current: 0,
-      total: locales.length,
+      total: targetLocales.length,
     })
     setMessage(null)
 
     try {
       const fieldLimit = getFieldTranslationLimit(field)
       let completed = 0
-      for (const targetLocale of locales) {
+      for (const targetLocale of targetLocales) {
         if (stopRequestedRef.current) {
           setMessage({ type: 'error', text: `Translation stopped. ${completed} locale${completed === 1 ? '' : 's'} completed.` })
           break
         }
 
         const sourceLocale = englishSourceLocale
-
-        if (!sourceLocale || sourceLocale === targetLocale) {
-          completed += 1
-          setProgress({
-            type: 'translate',
-            label: `Translating ${field}: ${targetLocale}`,
-            current: completed,
-            total: locales.length,
-          })
-          continue
-        }
 
         const sourceValue = metadataByLocale[sourceLocale]?.[field] || ''
         if (!sourceValue.trim()) {
@@ -1264,7 +1899,7 @@ export default function AppStoreConnect() {
             type: 'translate',
             label: `Translating ${field}: ${targetLocale}`,
             current: completed,
-            total: locales.length,
+            total: targetLocales.length,
           })
           continue
         }
@@ -1295,7 +1930,7 @@ export default function AppStoreConnect() {
           type: 'translate',
           label: `Translating ${field}: ${targetLocale}`,
           current: completed,
-          total: locales.length,
+          total: targetLocales.length,
         })
       }
 
@@ -1450,6 +2085,7 @@ export default function AppStoreConnect() {
       body: JSON.stringify({
         appId: selectedApp?.id,
         appClipId: selectedAppClip.id,
+        defaultExperienceId: currentAppClipDefaultExperienceId || undefined,
         locale,
         ...changedMetadata,
       }),
@@ -1475,7 +2111,287 @@ export default function AppStoreConnect() {
   }, [appClipLocalizations, appClipMetadataByLocale, originalAppClipMetadataByLocale])
 
   const hasChangedAppClipLocales = changedAppClipLocales.length > 0
-  const hasBlockingAppClipAction = savingAppClip || translatingAppClipSectionField !== null || translatingAppClipFieldKey !== null
+  const hasBlockingAppClipAction = savingAppClip || copyingAppClipUsDefaults || translatingAppClipSectionField !== null || translatingAppClipFieldKey !== null
+  const hasLastAppClipSubtitles = Object.values(lastAppClipMetadataByLocale).some((metadata) => metadata?.subtitle)
+  const appPreviewLocalizationsForUi = useMemo(() => {
+    const byLocale = new Map()
+
+    for (const localization of appPreviewLocalizations || []) {
+      const locale = localization?.attributes?.locale
+      if (locale) {
+        byLocale.set(locale, localization)
+      }
+    }
+
+    for (const localization of localizations || []) {
+      const locale = localization?.attributes?.locale
+      if (locale && !byLocale.has(locale)) {
+        byLocale.set(locale, {
+          id: `preview-${locale}`,
+          attributes: {
+            locale,
+          },
+          appPreviewSets: [],
+        })
+      }
+    }
+
+    return sortByLocale(Array.from(byLocale.values()))
+  }, [appPreviewLocalizations, localizations])
+  const appPreviewTypeOptions = useMemo(() => {
+    const existingPreviewTypes = appPreviewLocalizations
+      .flatMap((localization) => localization?.appPreviewSets || [])
+      .map((previewSet) => previewSet?.attributes?.previewType)
+      .filter(Boolean)
+    const optionsByValue = new Map(APP_PREVIEW_TYPE_OPTIONS.map((option) => [option.value, option]))
+
+    for (const previewType of existingPreviewTypes) {
+      if (!optionsByValue.has(previewType)) {
+        optionsByValue.set(previewType, {
+          value: previewType,
+          label: formatAppPreviewTypeLabel(previewType),
+        })
+      }
+    }
+
+    return Array.from(optionsByValue.values())
+  }, [appPreviewLocalizations])
+
+  const updateAppPreviewDraft = (key, values) => {
+    setAppPreviewDrafts((previous) => ({
+      ...previous,
+      [key]: {
+        ...(previous[key] && typeof previous[key] === 'object' ? previous[key] : {}),
+        ...values,
+      },
+    }))
+    setAppPreviewMessage(null)
+  }
+
+  const getAppPreviewUploadDraft = (locale) => {
+    const key = getAppPreviewUploadKey(locale)
+    const existingPreviewType = appPreviewLocalizations
+      .find((localization) => localization?.attributes?.locale === locale)
+      ?.appPreviewSets?.find((previewSet) => previewSet?.attributes?.previewType)?.attributes?.previewType
+
+    return {
+      previewType: existingPreviewType || appPreviewTypeOptions[0]?.value || 'IPHONE_65',
+      customPreviewType: '',
+      previewFrameTimeCode: '00:00:00:00',
+      ...(appPreviewDrafts[key] || {}),
+    }
+  }
+
+  const getAppPreviewUploadType = (locale) => {
+    const draft = getAppPreviewUploadDraft(locale)
+    return String(draft.customPreviewType || draft.previewType || '').trim()
+  }
+
+  const handleAppPreviewFileChange = (locale, file) => {
+    const key = getAppPreviewUploadKey(locale)
+
+    setAppPreviewFilesByLocale((previous) => ({
+      ...previous,
+      [locale]: file || null,
+    }))
+
+    setAppPreviewLocalVideoUrlsByLocale((previous) => {
+      const previousUrl = previous[locale]
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl)
+        appPreviewObjectUrlsRef.current.delete(previousUrl)
+      }
+
+      if (!file) {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      }
+
+      const nextUrl = URL.createObjectURL(file)
+      appPreviewObjectUrlsRef.current.add(nextUrl)
+      return {
+        ...previous,
+        [locale]: nextUrl,
+      }
+    })
+
+    updateAppPreviewDraft(key, {
+      fileName: file?.name || '',
+    })
+  }
+
+  const handleUseCurrentAppPreviewFrame = (key, draftKey) => {
+    const video = appPreviewVideoRefs.current[key]
+    if (!video) {
+      setAppPreviewMessage({ type: 'error', text: 'Load or play the preview first, then choose the current frame.' })
+      return
+    }
+
+    updateAppPreviewDraft(draftKey, {
+      previewFrameTimeCode: secondsToAppPreviewFrameTimeCode(video.currentTime || 0),
+    })
+  }
+
+  const handleUploadAppPreview = async (locale) => {
+    if (!selectedApp?.id) {
+      setAppPreviewMessage({ type: 'error', text: 'Select an app first.' })
+      return
+    }
+
+    const key = getAppPreviewUploadKey(locale)
+    const file = appPreviewFilesByLocale[locale]
+    const previewType = getAppPreviewUploadType(locale)
+    const draft = getAppPreviewUploadDraft(locale)
+
+    if (!file) {
+      setAppPreviewMessage({ type: 'error', text: `Choose a preview video for ${locale}.` })
+      return
+    }
+
+    if (!previewType) {
+      setAppPreviewMessage({ type: 'error', text: 'Choose or enter a preview type.' })
+      return
+    }
+
+    setUploadingAppPreviewKey(key)
+    setAppPreviewMessage(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('locale', locale)
+      formData.append('platform', platform)
+      formData.append('previewType', previewType)
+      formData.append('previewFrameTimeCode', draft.previewFrameTimeCode || '')
+
+      const res = await fetch(`/api/appstore/apps/${selectedApp.id}/previews`, {
+        method: 'POST',
+        body: formData,
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(json?.error?.message || 'Failed to upload app preview')
+      }
+
+      setAppPreviewMessage({ type: 'success', text: `Uploaded app preview for ${locale}.` })
+      setAppPreviewFilesByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setAppPreviewLocalVideoUrlsByLocale((previous) => {
+        const previousUrl = previous[locale]
+        if (previousUrl) {
+          URL.revokeObjectURL(previousUrl)
+          appPreviewObjectUrlsRef.current.delete(previousUrl)
+        }
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      await loadSelectedAppPreviews(selectedApp.id)
+    } catch (error) {
+      setAppPreviewMessage({ type: 'error', text: error.message })
+    } finally {
+      setUploadingAppPreviewKey(null)
+    }
+  }
+
+  const handleRefreshAppPreviews = async () => {
+    if (!selectedApp?.id) {
+      return
+    }
+
+    try {
+      await loadSelectedAppPreviews(selectedApp.id, { clearExisting: true, resetMessage: true })
+    } catch (error) {
+      setAppPreviewMessage({ type: 'error', text: error.message })
+    }
+  }
+
+  const handleUpdateAppPreviewCoverFrame = async (previewId) => {
+    const draftKey = `cover:${previewId}`
+    const previewFrameTimeCode = String(appPreviewDrafts[draftKey]?.previewFrameTimeCode ?? appPreviewDrafts[draftKey] ?? '').trim()
+
+    if (!previewFrameTimeCode) {
+      setAppPreviewMessage({ type: 'error', text: 'Enter a cover frame timecode first.' })
+      return
+    }
+
+    setSavingAppPreviewCoverId(previewId)
+    setAppPreviewMessage(null)
+
+    try {
+      const res = await fetch(`/api/appstore/previews/${previewId}/cover`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ previewFrameTimeCode }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(json?.error?.message || 'Failed to update cover frame')
+      }
+
+      setAppPreviewLocalizations((previous) =>
+        previous.map((localization) => ({
+          ...localization,
+          appPreviewSets: (localization?.appPreviewSets || []).map((previewSet) => ({
+            ...previewSet,
+            appPreviews: (previewSet?.appPreviews || []).map((preview) =>
+              preview?.id === previewId
+                ? {
+                    ...preview,
+                    attributes: {
+                      ...(preview.attributes || {}),
+                      previewFrameTimeCode,
+                    },
+                  }
+                : preview
+            ),
+          })),
+        }))
+      )
+      setAppPreviewMessage({ type: 'success', text: 'Updated cover frame.' })
+    } catch (error) {
+      setAppPreviewMessage({ type: 'error', text: error.message })
+    } finally {
+      setSavingAppPreviewCoverId(null)
+    }
+  }
+
+  const handleCopyAppClipUsDefaults = async () => {
+    if (!selectedAppClip?.id) {
+      setAppClipMessage({ type: 'error', text: 'Select an App Clip first.' })
+      return
+    }
+
+    setCopyingAppClipUsDefaults(true)
+    setAppClipMessage(null)
+
+    try {
+      const res = await fetch('/api/appstore/appclips/copy-us', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appClipId: selectedAppClip.id,
+          defaultExperienceId: currentAppClipDefaultExperienceId || undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(json?.error?.message || 'Failed to copy US App Clip defaults')
+      }
+
+      const result = json?.data || {}
+      const pieces = []
+      if (result.actionCopied) pieces.push('action copied')
+      pieces.push(result.imageCopied ? 'US image copied' : result.imageMessage || 'US image not copied')
+
+      setAppClipMessage({ type: result.actionCopied || result.imageCopied ? 'success' : 'error', text: pieces.join('; ') })
+    } catch (error) {
+      setAppClipMessage({ type: 'error', text: error.message })
+    } finally {
+      setCopyingAppClipUsDefaults(false)
+    }
+  }
 
   const handleTranslateAppClipSectionField = async (field) => {
     const locales = appClipLocalizations.map((loc) => loc?.attributes?.locale).filter(Boolean)
@@ -1490,34 +2406,25 @@ export default function AppStoreConnect() {
       return
     }
 
+    const targetLocales = locales.filter((locale) => locale !== englishSourceLocale)
+
     clearStopRequested()
     setTranslatingAppClipSectionField(field)
     setProgress({
       type: 'translate',
       label: `Translating app clip ${field}`,
       current: 0,
-      total: locales.length,
+      total: targetLocales.length,
     })
     setAppClipMessage(null)
 
     try {
       const fieldLimit = getFieldTranslationLimit(field)
       let completed = 0
-      for (const targetLocale of locales) {
+      for (const targetLocale of targetLocales) {
         if (stopRequestedRef.current) {
           setAppClipMessage({ type: 'error', text: `Translation stopped. ${completed} locale${completed === 1 ? '' : 's'} completed.` })
           break
-        }
-
-        if (englishSourceLocale === targetLocale) {
-          completed += 1
-          setProgress({
-            type: 'translate',
-            label: `Translating app clip ${field}: ${targetLocale}`,
-            current: completed,
-            total: locales.length,
-          })
-          continue
         }
 
         const sourceValue = appClipMetadataByLocale[englishSourceLocale]?.[field] || ''
@@ -1527,7 +2434,7 @@ export default function AppStoreConnect() {
             type: 'translate',
             label: `Translating app clip ${field}: ${targetLocale}`,
             current: completed,
-            total: locales.length,
+            total: targetLocales.length,
           })
           continue
         }
@@ -1558,7 +2465,7 @@ export default function AppStoreConnect() {
           type: 'translate',
           label: `Translating app clip ${field}: ${targetLocale}`,
           current: completed,
-          total: locales.length,
+          total: targetLocales.length,
         })
       }
 
@@ -1682,6 +2589,48 @@ export default function AppStoreConnect() {
       setAppClipMessage({ type: 'error', text: err.message })
     } finally {
       setSavingAppClip(false)
+    }
+  }
+
+  const handleDeleteAppClipLocalization = async (locale) => {
+    const loc = appClipLocalizations.find((item) => item?.attributes?.locale === locale)
+    if (!loc?.id || loc.id === `appclip-${locale}`) {
+      setAppClipMessage({ type: 'error', text: `Nothing to remove — ${locale} hasn't been saved yet.` })
+      return
+    }
+
+    if (!window.confirm(`Remove the ${locale} app clip localization from App Store Connect? This cannot be undone.`)) {
+      return
+    }
+
+    setDeletingAppClipLocale(locale)
+    setAppClipMessage(null)
+
+    try {
+      const res = await fetch('/api/appstore/appclips/localizations', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ localizationId: loc.id }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'Failed to remove app clip localization')
+
+      setAppClipLocalizations((previous) =>
+        previous.map((item) => (item?.attributes?.locale === locale ? { id: `appclip-${locale}`, attributes: { locale, subtitle: '' } } : item))
+      )
+      setAppClipMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setOriginalAppClipMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setAppClipMessage({ type: 'success', text: `Removed ${locale} app clip localization.` })
+    } catch (err) {
+      setAppClipMessage({ type: 'error', text: err.message })
+    } finally {
+      setDeletingAppClipLocale(null)
     }
   }
 
@@ -1818,6 +2767,50 @@ export default function AppStoreConnect() {
     }
   }
 
+  const handleDeleteSubscriptionLocalization = async (locale) => {
+    const loc = subscriptionLocalizations.find((item) => item?.attributes?.locale === locale)
+    if (!loc?.id || loc.id === `subscription-${locale}`) {
+      setSubscriptionMessage({ type: 'error', text: `Nothing to remove — ${locale} hasn't been saved yet.` })
+      return
+    }
+
+    if (!window.confirm(`Remove the ${locale} subscription localization from App Store Connect? This cannot be undone.`)) {
+      return
+    }
+
+    setDeletingSubscriptionLocale(locale)
+    setSubscriptionMessage(null)
+
+    try {
+      const res = await fetch('/api/appstore/subscriptions/localizations', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionLocalizationId: loc.id }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'Failed to remove subscription localization')
+
+      setSubscriptionLocalizations((previous) =>
+        previous.map((item) =>
+          item?.attributes?.locale === locale ? { id: `subscription-${locale}`, attributes: { locale, name: '', description: '' } } : item
+        )
+      )
+      setSubscriptionMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setOriginalSubscriptionMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setSubscriptionMessage({ type: 'success', text: `Removed ${locale} subscription localization.` })
+    } catch (err) {
+      setSubscriptionMessage({ type: 'error', text: err.message })
+    } finally {
+      setDeletingSubscriptionLocale(null)
+    }
+  }
+
   const saveSubscriptionGroupLocaleMetadata = async (locale) => {
     const changedMetadata = getChangedSubscriptionGroupMetadataForLocale(locale)
     if (Object.keys(changedMetadata).length === 0) {
@@ -1878,6 +2871,48 @@ export default function AppStoreConnect() {
     }
   }
 
+  const handleDeleteSubscriptionGroupLocalization = async (locale) => {
+    const loc = subscriptionGroupLocalizations.find((item) => item?.attributes?.locale === locale)
+    if (!loc?.id || loc.id === `subscription-group-${locale}`) {
+      setSubscriptionGroupMessage({ type: 'error', text: `Nothing to remove — ${locale} hasn't been saved yet.` })
+      return
+    }
+
+    if (!window.confirm(`Remove the ${locale} subscription group localization from App Store Connect? This cannot be undone.`)) {
+      return
+    }
+
+    setDeletingSubscriptionGroupLocale(locale)
+    setSubscriptionGroupMessage(null)
+
+    try {
+      const res = await fetch('/api/appstore/subscription-groups/localizations', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionGroupLocalizationId: loc.id }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json?.error?.message || 'Failed to remove subscription group localization')
+
+      setSubscriptionGroupLocalizations((previous) =>
+        previous.map((item) => (item?.attributes?.locale === locale ? { id: `subscription-group-${locale}`, attributes: { locale, name: '' } } : item))
+      )
+      setSubscriptionGroupMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setOriginalSubscriptionGroupMetadataByLocale((previous) => {
+        const { [locale]: _removed, ...rest } = previous
+        return rest
+      })
+      setSubscriptionGroupMessage({ type: 'success', text: `Removed ${locale} subscription group localization.` })
+    } catch (err) {
+      setSubscriptionGroupMessage({ type: 'error', text: err.message })
+    } finally {
+      setDeletingSubscriptionGroupLocale(null)
+    }
+  }
+
   const handleTranslateSubscriptionGroupSectionField = async (field) => {
     const locales = subscriptionGroupLocalizations.map((loc) => loc?.attributes?.locale).filter(Boolean)
     if (locales.length === 0) {
@@ -1891,37 +2926,28 @@ export default function AppStoreConnect() {
       return
     }
 
+    const targetLocales = locales.filter((locale) => locale !== englishSourceLocale)
+
     clearStopRequested()
     setTranslatingSubscriptionGroupSectionField(field)
     setProgress({
       type: 'translate',
       label: `Translating subscription group ${field}`,
       current: 0,
-      total: locales.length,
+      total: targetLocales.length,
     })
     setSubscriptionGroupMessage(null)
 
     try {
       const fieldLimit = getFieldTranslationLimit(`subscription_group_${field}`)
       let completed = 0
-      for (const targetLocale of locales) {
+      for (const targetLocale of targetLocales) {
         if (stopRequestedRef.current) {
           setSubscriptionGroupMessage({ type: 'error', text: `Translation stopped. ${completed} locale${completed === 1 ? '' : 's'} completed.` })
           break
         }
 
         const sourceLocale = englishSourceLocale
-
-        if (!sourceLocale || sourceLocale === targetLocale) {
-          completed += 1
-          setProgress({
-            type: 'translate',
-            label: `Translating subscription group ${field}: ${targetLocale}`,
-            current: completed,
-            total: locales.length,
-          })
-          continue
-        }
 
         const sourceValue = subscriptionGroupMetadataByLocale[sourceLocale]?.[field] || ''
         if (!sourceValue.trim()) {
@@ -1930,7 +2956,7 @@ export default function AppStoreConnect() {
             type: 'translate',
             label: `Translating subscription group ${field}: ${targetLocale}`,
             current: completed,
-            total: locales.length,
+            total: targetLocales.length,
           })
           continue
         }
@@ -1961,7 +2987,7 @@ export default function AppStoreConnect() {
           type: 'translate',
           label: `Translating subscription group ${field}: ${targetLocale}`,
           current: completed,
-          total: locales.length,
+          total: targetLocales.length,
         })
       }
 
@@ -2070,37 +3096,28 @@ export default function AppStoreConnect() {
       return
     }
 
+    const targetLocales = locales.filter((locale) => locale !== englishSourceLocale)
+
     clearStopRequested()
     setTranslatingSubscriptionSectionField(field)
     setProgress({
       type: 'translate',
       label: `Translating subscription ${field}`,
       current: 0,
-      total: locales.length,
+      total: targetLocales.length,
     })
     setSubscriptionMessage(null)
 
     try {
       const fieldLimit = getFieldTranslationLimit(`subscription_${field}`)
       let completed = 0
-      for (const targetLocale of locales) {
+      for (const targetLocale of targetLocales) {
         if (stopRequestedRef.current) {
           setSubscriptionMessage({ type: 'error', text: `Translation stopped. ${completed} locale${completed === 1 ? '' : 's'} completed.` })
           break
         }
 
         const sourceLocale = englishSourceLocale
-
-        if (!sourceLocale || sourceLocale === targetLocale) {
-          completed += 1
-          setProgress({
-            type: 'translate',
-            label: `Translating subscription ${field}: ${targetLocale}`,
-            current: completed,
-            total: locales.length,
-          })
-          continue
-        }
 
         const sourceValue = subscriptionMetadataByLocale[sourceLocale]?.[field] || ''
         if (!sourceValue.trim()) {
@@ -2109,7 +3126,7 @@ export default function AppStoreConnect() {
             type: 'translate',
             label: `Translating subscription ${field}: ${targetLocale}`,
             current: completed,
-            total: locales.length,
+            total: targetLocales.length,
           })
           continue
         }
@@ -2140,7 +3157,7 @@ export default function AppStoreConnect() {
           type: 'translate',
           label: `Translating subscription ${field}: ${targetLocale}`,
           current: completed,
-          total: locales.length,
+          total: targetLocales.length,
         })
       }
 
@@ -2305,7 +3322,39 @@ export default function AppStoreConnect() {
                 }`}>
                 App Clips
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveSectionTab('previews')}
+                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                  activeSectionTab === 'previews' ? 'bg-sky-900 text-white shadow-sm' : 'text-slate-600 hover:bg-white'
+                }`}>
+                Previews
+              </button>
             </div>
+
+            {(activeSectionTab === 'aso' || activeSectionTab === 'submit' || activeSectionTab === 'previews') && (
+              <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => setPlatform('IOS')}
+                  disabled={hasBlockingAction || localizationsLoading || appPreviewsLoading}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-60 ${
+                    platform === 'IOS' ? 'bg-sky-900 text-white shadow-sm' : 'text-slate-600 hover:bg-white'
+                  }`}>
+                  iOS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlatform('MAC_OS')}
+                  disabled={hasBlockingAction || localizationsLoading || appPreviewsLoading}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-60 ${
+                    platform === 'MAC_OS' ? 'bg-sky-900 text-white shadow-sm' : 'text-slate-600 hover:bg-white'
+                  }`}>
+                  macOS
+                </button>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={handleExportToMacOS}
@@ -2331,13 +3380,31 @@ export default function AppStoreConnect() {
                   {versionMeta.appStoreState && (
                     <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold tracking-wide">{versionMeta.appStoreState.replace(/_/g, ' ')}</span>
                   )}
+                  <div className="ml-auto flex items-center gap-2">
+                    {hasChangedLocales && (
+                      <button
+                        type="button"
+                        onClick={() => setMetadataByLocale(originalMetadataByLocale)}
+                        disabled={hasBlockingAction}
+                        className="rounded-full border border-rose-200 px-3 py-1 font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60">
+                        Discard edits
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => loadSelectedAppLocalizations(selectedApp.id).catch(() => {})}
+                      disabled={hasBlockingAction}
+                      className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+                      Refresh
+                    </button>
+                  </div>
                 </div>
               )}
 
               {!localizationsLoading && !localizationsError && versionMeta && !versionMeta.versionId && (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Showing metadata from the latest App Store version. To update keywords, promotional text, description, or What's New, the app must also have
-                  an editable version in <strong>Prepare for Submission</strong>, a rejected state, or similar.
+                  Showing metadata from the latest App Store version. To update keywords, promotional text, description, What's New, Support URL, or
+                  Marketing URL, the app must also have an editable version in <strong>Prepare for Submission</strong>, a rejected state, or similar.
                 </div>
               )}
               {!localizationsLoading && !localizationsError && localizations.length === 0 && versionMeta?.versionId && (
@@ -2418,6 +3485,14 @@ export default function AppStoreConnect() {
                                       </select>
                                     </>
                                   )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteLocalization(locale)}
+                                    disabled={hasBlockingAction || deletingLocale === locale}
+                                    className="ml-auto rounded-full border border-rose-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-rose-600 disabled:opacity-50">
+                                    {deletingLocale === locale ? 'Removing…' : '✕ Remove'}
+                                  </button>
                                 </div>
 
                                 <div className="grid gap-3">
@@ -2643,20 +3718,27 @@ export default function AppStoreConnect() {
                   {activeSectionTab === 'submit' &&
                     localizations.length > 0 &&
                     [
+                      { key: 'whatsNew', label: "Update Message (What's New)", rows: 3 },
                       { key: 'promotionalText', label: 'Promotional Text', rows: 2 },
                       { key: 'description', label: 'Description', rows: 4 },
-                      { key: 'whatsNew', label: "Update Message (What's New)", rows: 3 },
-                    ].map((field) => (
+                      { key: 'supportUrl', label: 'Support URL', type: 'url' },
+                      { key: 'marketingUrl', label: 'Marketing URL', type: 'url' },
+                    ].map((field) => {
+                      const isUrlField = field.type === 'url'
+
+                      return (
                       <div key={field.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                         <div className="mb-3 flex items-center gap-2">
                           <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-500">{field.label}</h4>
-                          <button
-                            type="button"
-                            onClick={() => handleTranslateSectionField(field.key)}
-                            disabled={hasBlockingAction}
-                            className="ml-auto rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600 disabled:opacity-50">
-                            {translatingSectionField === field.key ? 'Translating…' : 'Translate Section'}
-                          </button>
+                          {!isUrlField && (
+                            <button
+                              type="button"
+                              onClick={() => handleTranslateSectionField(field.key)}
+                              disabled={hasBlockingAction}
+                              className="ml-auto rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600 disabled:opacity-50">
+                              {translatingSectionField === field.key ? 'Translating…' : 'Translate Section'}
+                            </button>
+                          )}
                         </div>
 
                         <div className="grid gap-3">
@@ -2672,6 +3754,8 @@ export default function AppStoreConnect() {
                               promotionalText: '',
                               description: '',
                               whatsNew: '',
+                              supportUrl: '',
+                              marketingUrl: '',
                             }
 
                             return (
@@ -2692,7 +3776,18 @@ export default function AppStoreConnect() {
                                     </span>
                                   )}
 
-                                  {!isEnglish && (
+                                  {isUrlField && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyFieldToAllLocales(field.key, locale)}
+                                      disabled={hasBlockingAction || !localeMetadata[field.key]}
+                                      title={`Copy this ${field.label} to all other locales`}
+                                      className="ml-auto rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600 disabled:opacity-50">
+                                      Copy to Others
+                                    </button>
+                                  )}
+
+                                  {!isUrlField && !isEnglish && (
                                     <>
                                       <label className="ml-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Source</label>
                                       <select
@@ -2720,12 +3815,21 @@ export default function AppStoreConnect() {
                                   )}
                                 </div>
 
-                                <textarea
-                                  rows={field.rows}
-                                  className={`w-full rounded-xl border px-3 py-2 text-sm text-slate-700 ${fieldChanged ? 'border-amber-300 bg-amber-50/40 focus:border-amber-400' : 'border-slate-200 bg-white'}`}
-                                  value={localeMetadata[field.key] || ''}
-                                  onChange={(e) => handleMetadataChange(locale, field.key, e.target.value)}
-                                />
+                                {isUrlField ? (
+                                  <input
+                                    type="url"
+                                    className={`w-full rounded-xl border px-3 py-2 text-sm text-slate-700 ${fieldChanged ? 'border-amber-300 bg-amber-50/40 focus:border-amber-400' : 'border-slate-200 bg-white'}`}
+                                    value={localeMetadata[field.key] || ''}
+                                    onChange={(e) => handleMetadataChange(locale, field.key, e.target.value)}
+                                  />
+                                ) : (
+                                  <textarea
+                                    rows={field.rows}
+                                    className={`w-full rounded-xl border px-3 py-2 text-sm text-slate-700 ${fieldChanged ? 'border-amber-300 bg-amber-50/40 focus:border-amber-400' : 'border-slate-200 bg-white'}`}
+                                    value={localeMetadata[field.key] || ''}
+                                    onChange={(e) => handleMetadataChange(locale, field.key, e.target.value)}
+                                  />
+                                )}
 
                                 {field.key === 'description' && (
                                   <div className="mt-2">
@@ -2749,8 +3853,9 @@ export default function AppStoreConnect() {
                           })}
                         </div>
                       </div>
-                    ))}
-                  <div className="sticky max-w-150 ml-auto mr-4 bottom-4 z-20 rounded-2xl border border-sky-200 bg-white/95 p-4 shadow-lg backdrop-blur">
+                      )
+                    })}
+                  <div className="sticky max-w-240 ml-auto mr-4 bottom-4 z-20 rounded-2xl border border-sky-200 bg-white/95 p-4 shadow-lg backdrop-blur">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
@@ -2782,6 +3887,14 @@ export default function AppStoreConnect() {
 
                       <button
                         type="button"
+                        onClick={() => handleSaveAllLocales({ forceAll: true })}
+                        disabled={hasBlockingAction || localizations.length === 0 || hasAnyMetadataLimitError}
+                        className="inline-flex shrink-0 items-center justify-center rounded-full border border-sky-300 bg-white px-4 py-2 text-md font-semibold text-sky-800 hover:bg-sky-50 disabled:opacity-60">
+                        {savingAll ? 'Updating…' : `Re-update All (${localizations.length})`}
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={requestStop}
                         disabled={!hasBlockingAction || stopRequested}
                         className="inline-flex shrink-0 items-center justify-center rounded-full border border-rose-300 bg-white px-4 py-2 text-md font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60">
@@ -2795,6 +3908,309 @@ export default function AppStoreConnect() {
                 </div>
               )}
             </>
+          )}
+
+          {activeSectionTab === 'previews' && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h4 className="text-lg font-semibold tracking-tight text-slate-900">App Previews</h4>
+                  <p className="mt-1 text-sm text-slate-500">View uploaded App Store preview videos, upload a new preview, and set the cover frame.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRefreshAppPreviews}
+                  disabled={appPreviewsLoading}
+                  className="inline-flex shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 disabled:opacity-60">
+                  {appPreviewsLoading ? 'Refreshing…' : 'Refresh Previews'}
+                </button>
+              </div>
+
+              {appPreviewsLoading && <p className="text-sm text-slate-500">Loading app previews…</p>}
+              {appPreviewsError && <p className="text-sm text-rose-600">{appPreviewsError}</p>}
+
+              {!appPreviewsLoading && appPreviewVersionMeta && (
+                <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                  {appPreviewVersionMeta.versionString && (
+                    <span className="rounded-full bg-blue-100 px-3 py-1 font-semibold tracking-wide text-blue-900 ring-1 ring-blue-200">
+                      v{appPreviewVersionMeta.versionString}
+                    </span>
+                  )}
+                  {appPreviewVersionMeta.appStoreState && (
+                    <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold tracking-wide">
+                      {appPreviewVersionMeta.appStoreState.replace(/_/g, ' ')}
+                    </span>
+                  )}
+                  {appPreviewVersionMeta.platform && (
+                    <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold tracking-wide">{appPreviewVersionMeta.platform}</span>
+                  )}
+                </div>
+              )}
+
+              {!appPreviewsLoading && appPreviewVersionMeta && !appPreviewVersionMeta.versionId && (
+                <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Existing previews can be viewed from the latest version. Uploading or changing cover frames requires an editable App Store version in Prepare
+                  for Submission or a rejected state.
+                </div>
+              )}
+
+              {!appPreviewsLoading && !appPreviewsError && appPreviewLocalizationsForUi.length === 0 ? (
+                <p className="text-sm text-slate-500">No locales found for this app version.</p>
+              ) : null}
+
+              {!appPreviewsLoading && appPreviewLocalizationsForUi.length > 0 ? (
+                <div className="grid gap-4">
+                  {appPreviewLocalizationsForUi.map((localization) => {
+                    const locale = localization?.attributes?.locale || 'unknown'
+                    const localeLabel = formatLocaleLabel(locale)
+                    const uploadKey = getAppPreviewUploadKey(locale)
+                    const localVideoRefKey = `local-preview:${locale}`
+                    const uploadDraft = getAppPreviewUploadDraft(locale)
+                    const selectedFile = appPreviewFilesByLocale[locale]
+                    const localVideoUrl = appPreviewLocalVideoUrlsByLocale[locale]
+                    const previewSets = localization?.appPreviewSets || []
+                    const hasExistingPreviews = previewSets.some((previewSet) => (previewSet?.appPreviews || []).length > 0)
+                    const canUploadAppPreviews = Boolean(appPreviewVersionMeta?.versionId)
+
+                    return (
+                      <div key={`app-preview-locale-${locale}`} className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="mb-4 flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-2 rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold tracking-wide text-sky-900 ring-1 ring-sky-200">
+                            <span>{localeLabel}</span>
+                            <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-sky-800 ring-1 ring-sky-200">{locale}</span>
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            {hasExistingPreviews
+                              ? `${previewSets.reduce((sum, previewSet) => sum + (previewSet?.appPreviews || []).length, 0)} preview(s)`
+                              : 'No previews yet'}
+                          </span>
+                        </div>
+
+                        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
+                          <div className="grid gap-3">
+                            {hasExistingPreviews ? (
+                              previewSets.map((previewSet) => {
+                                const previewType = previewSet?.attributes?.previewType || 'Unknown'
+                                const previews = previewSet?.appPreviews || []
+
+                                if (previews.length === 0) {
+                                  return null
+                                }
+
+                                return (
+                                  <div key={`app-preview-set-${locale}-${previewSet.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                    <div className="mb-3 flex items-center justify-between gap-2">
+                                      <div>
+                                        <p className="text-sm font-semibold text-slate-900">{formatAppPreviewTypeLabel(previewType)}</p>
+                                        <p className="text-xs font-mono text-slate-500">{previewType}</p>
+                                      </div>
+                                      <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600 ring-1 ring-slate-200">
+                                        {previews.length} file{previews.length === 1 ? '' : 's'}
+                                      </span>
+                                    </div>
+
+                                    <div className="grid gap-3">
+                                      {previews.map((preview) => {
+                                        const previewAttributes = preview?.attributes || {}
+                                        const videoUrl = getAppPreviewVideoUrl(previewAttributes.videoUrl || previewAttributes.previewVideoUrl)
+                                        const videoRefKey = getAppPreviewVideoRefKey(preview.id)
+                                        const coverDraftKey = `cover:${preview.id}`
+                                        const coverDraft =
+                                          appPreviewDrafts[coverDraftKey]?.previewFrameTimeCode || previewAttributes.previewFrameTimeCode || '00:00:00:00'
+                                        const stateLabel = previewAttributes.appPreviewState || getAssetDeliveryStateLabel(previewAttributes.assetDeliveryState)
+
+                                        return (
+                                          <div key={`app-preview-${preview.id}`} className="rounded-xl border border-slate-200 bg-white p-3">
+                                            <div className="grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
+                                              <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
+                                                {videoUrl ? (
+                                                  <video
+                                                    ref={(node) => {
+                                                      if (node) appPreviewVideoRefs.current[videoRefKey] = node
+                                                    }}
+                                                    src={videoUrl}
+                                                    controls
+                                                    preload="metadata"
+                                                    className="aspect-[9/16] h-full max-h-80 w-full bg-black object-contain"
+                                                  />
+                                                ) : (
+                                                  <div className="flex aspect-[9/16] items-center justify-center px-4 text-center text-xs text-slate-300">
+                                                    Preview video URL is not available yet.
+                                                  </div>
+                                                )}
+                                              </div>
+
+                                              <div className="min-w-0">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <p className="truncate text-sm font-semibold text-slate-900">{previewAttributes.fileName || preview.id}</p>
+                                                  {stateLabel ? (
+                                                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                                                      {String(stateLabel).replace(/_/g, ' ')}
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                                <p className="mt-1 text-xs text-slate-500">
+                                                  {formatBytes(previewAttributes.fileSize)}
+                                                  {previewAttributes.sourceFileChecksum ? ` · ${previewAttributes.sourceFileChecksum}` : ''}
+                                                </p>
+
+                                                <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+                                                  <label className="block">
+                                                    <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                                      Cover Frame Timecode
+                                                    </span>
+                                                    <input
+                                                      type="text"
+                                                      value={coverDraft}
+                                                      placeholder="00:00:05:00"
+                                                      onChange={(event) => updateAppPreviewDraft(coverDraftKey, { previewFrameTimeCode: event.target.value })}
+                                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                                                    />
+                                                  </label>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleUseCurrentAppPreviewFrame(videoRefKey, coverDraftKey)}
+                                                    disabled={!videoUrl}
+                                                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-600 hover:border-slate-300 disabled:opacity-50">
+                                                    Use Current Frame
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleUpdateAppPreviewCoverFrame(preview.id)}
+                                                    disabled={savingAppPreviewCoverId === preview.id || !appPreviewVersionMeta?.versionId}
+                                                    className="rounded-full bg-sky-900 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white hover:bg-sky-800 disabled:opacity-60">
+                                                    {savingAppPreviewCoverId === preview.id ? 'Saving…' : 'Save Cover'}
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                )
+                              })
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                                No App Store preview videos have been uploaded for this locale.
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <h5 className="text-sm font-semibold text-slate-900">Upload Preview</h5>
+                            <p className="mt-1 text-xs text-slate-500">Choose a video, pick the device preview type, then set the cover frame before upload.</p>
+
+                            <div className="mt-3 grid gap-3">
+                              <label className="block">
+                                <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Preview Video</span>
+                                <input
+                                  type="file"
+                                  accept="video/mp4,video/quicktime,video/*"
+                                  disabled={!canUploadAppPreviews || uploadingAppPreviewKey === uploadKey}
+                                  onChange={(event) => handleAppPreviewFileChange(locale, event.target.files?.[0] || null)}
+                                  className="block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 file:mr-3 file:rounded-full file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-700 disabled:opacity-60"
+                                />
+                              </label>
+
+                              {selectedFile ? (
+                                <p className="text-xs text-slate-500">
+                                  {selectedFile.name} · {formatBytes(selectedFile.size)}
+                                </p>
+                              ) : null}
+
+                              {localVideoUrl ? (
+                                <video
+                                  ref={(node) => {
+                                    if (node) appPreviewVideoRefs.current[localVideoRefKey] = node
+                                  }}
+                                  src={localVideoUrl}
+                                  controls
+                                  preload="metadata"
+                                  className="aspect-[9/16] max-h-80 w-full rounded-xl border border-slate-200 bg-black object-contain"
+                                />
+                              ) : null}
+
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <label className="block">
+                                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Preview Type</span>
+                                  <select
+                                    value={uploadDraft.previewType || appPreviewTypeOptions[0]?.value || ''}
+                                    disabled={!canUploadAppPreviews || uploadingAppPreviewKey === uploadKey}
+                                    onChange={(event) => updateAppPreviewDraft(uploadKey, { previewType: event.target.value, customPreviewType: '' })}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 disabled:opacity-60">
+                                    {appPreviewTypeOptions.map((option) => (
+                                      <option key={`preview-type-${locale}-${option.value}`} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+
+                                <label className="block">
+                                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Custom Type</span>
+                                  <input
+                                    type="text"
+                                    value={uploadDraft.customPreviewType || ''}
+                                    placeholder="IPHONE_65"
+                                    disabled={!canUploadAppPreviews || uploadingAppPreviewKey === uploadKey}
+                                    onChange={(event) => updateAppPreviewDraft(uploadKey, { customPreviewType: event.target.value })}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
+                                  />
+                                </label>
+                              </div>
+
+                              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                                <label className="block">
+                                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Cover Frame</span>
+                                  <input
+                                    type="text"
+                                    value={uploadDraft.previewFrameTimeCode || ''}
+                                    placeholder="00:00:05:00"
+                                    disabled={!canUploadAppPreviews || uploadingAppPreviewKey === uploadKey}
+                                    onChange={(event) => updateAppPreviewDraft(uploadKey, { previewFrameTimeCode: event.target.value })}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 disabled:opacity-60"
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUseCurrentAppPreviewFrame(localVideoRefKey, uploadKey)}
+                                  disabled={!localVideoUrl || !canUploadAppPreviews || uploadingAppPreviewKey === uploadKey}
+                                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-600 hover:border-slate-300 disabled:opacity-50">
+                                  Use Current Frame
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleUploadAppPreview(locale)}
+                                disabled={!canUploadAppPreviews || uploadingAppPreviewKey === uploadKey || !selectedFile}
+                                className="inline-flex items-center justify-center rounded-full bg-sky-900 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60">
+                                {uploadingAppPreviewKey === uploadKey ? 'Uploading…' : 'Upload Preview'}
+                              </button>
+
+                              {!canUploadAppPreviews ? (
+                                <p className="text-xs text-amber-700">Upload is disabled until this app has an editable App Store version.</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {appPreviewMessage ? (
+                    <div
+                      className={`rounded-2xl border px-4 py-3 text-sm ${
+                        appPreviewMessage.type === 'error' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      }`}>
+                      {appPreviewMessage.text}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           )}
 
           {activeSectionTab === 'subscriptions' && (
@@ -2920,6 +4336,19 @@ export default function AppStoreConnect() {
                                       </select>
                                     </>
                                   )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteSubscriptionLocalization(locale)}
+                                    disabled={
+                                      savingSubscriptions ||
+                                      translatingSubscriptionSectionField !== null ||
+                                      translatingSubscriptionFieldKey !== null ||
+                                      deletingSubscriptionLocale === locale
+                                    }
+                                    className="ml-auto rounded-full border border-rose-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-rose-600 disabled:opacity-50">
+                                    {deletingSubscriptionLocale === locale ? 'Removing…' : '✕ Remove'}
+                                  </button>
                                 </div>
 
                                 <div className="grid gap-3">
@@ -3080,6 +4509,19 @@ export default function AppStoreConnect() {
                                       </button>
                                     </>
                                   )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteSubscriptionGroupLocalization(locale)}
+                                    disabled={
+                                      savingSubscriptionGroups ||
+                                      translatingSubscriptionGroupSectionField !== null ||
+                                      translatingSubscriptionGroupFieldKey !== null ||
+                                      deletingSubscriptionGroupLocale === locale
+                                    }
+                                    className="ml-auto rounded-full border border-rose-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-rose-600 disabled:opacity-50">
+                                    {deletingSubscriptionGroupLocale === locale ? 'Removing…' : '✕ Remove'}
+                                  </button>
                                 </div>
 
                                 <div>
@@ -3125,6 +4567,8 @@ export default function AppStoreConnect() {
                   ) : null}
                 </div>
               ) : null}
+
+              {selectedSubscription ? <SubscriptionWinBackOffers subscription={selectedSubscription} /> : null}
             </div>
           )}
 
@@ -3167,6 +4611,20 @@ export default function AppStoreConnect() {
                       <h4 className="text-sm font-semibold text-slate-900 mb-4">App Clip Localizations</h4>
                       <div className="mb-3 flex items-center gap-2">
                         <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-500">Subtitle By Locale</h4>
+                        <button
+                          type="button"
+                          onClick={handleCopyAppClipUsDefaults}
+                          disabled={hasBlockingAppClipAction || !currentAppClipDefaultExperienceId}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600 disabled:opacity-50">
+                          {copyingAppClipUsDefaults ? 'Copying US…' : 'Copy US Action/Image'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={pasteLastAppClipSubtitles}
+                          disabled={hasBlockingAppClipAction || !hasLastAppClipSubtitles}
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600 disabled:opacity-50">
+                          Paste Last Version
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleTranslateAppClipSectionField('subtitle')}
@@ -3217,6 +4675,14 @@ export default function AppStoreConnect() {
                                     </select>
                                   </>
                                 )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteAppClipLocalization(locale)}
+                                  disabled={hasBlockingAppClipAction || deletingAppClipLocale === locale}
+                                  className="ml-auto rounded-full border border-rose-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-rose-600 disabled:opacity-50">
+                                  {deletingAppClipLocale === locale ? 'Removing…' : '✕ Remove'}
+                                </button>
                               </div>
 
                               <div className="grid gap-3">
@@ -3226,6 +4692,15 @@ export default function AppStoreConnect() {
                                     <div key={`appclip-field-${locale}-${field.key}`}>
                                       <div className="mb-1 flex items-center gap-2">
                                         <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{field.label}</label>
+                                        {lastAppClipMetadataByLocale[locale]?.subtitle && (
+                                          <button
+                                            type="button"
+                                            onClick={() => pasteLastAppClipSubtitle(locale)}
+                                            disabled={hasBlockingAppClipAction}
+                                            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-600 disabled:opacity-50">
+                                            Paste Last
+                                          </button>
+                                        )}
                                         {!isEnglish && (
                                           <button
                                             type="button"

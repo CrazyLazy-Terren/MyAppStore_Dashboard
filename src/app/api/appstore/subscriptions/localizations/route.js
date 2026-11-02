@@ -27,3 +27,19 @@ export async function POST(request) {
     return fail(error)
   }
 }
+
+export async function DELETE(request) {
+  try {
+    const body = await request.json()
+    const { subscriptionLocalizationId } = body || {}
+
+    if (!subscriptionLocalizationId) {
+      throw new Error('subscriptionLocalizationId is required')
+    }
+
+    const result = await appStoreConnect.deleteSubscriptionLocalization(subscriptionLocalizationId)
+    return ok(result)
+  } catch (error) {
+    return fail(error)
+  }
+}

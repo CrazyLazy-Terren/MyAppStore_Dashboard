@@ -101,6 +101,7 @@ export default function CampaignDetail({ id }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [updatingKeywordId, setUpdatingKeywordId] = useState(null)
+  const [updatingBidKeywordId, setUpdatingBidKeywordId] = useState(null)
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [sortField, setSortField] = useState('localSpend')
   const [sortDirection, setSortDirection] = useState('desc')
@@ -187,6 +188,45 @@ export default function CampaignDetail({ id }) {
       setError(err.message)
     } finally {
       setUpdatingKeywordId(null)
+    }
+  }
+
+  const handleUpdateKeywordBid = async (keyword, nextBidAmount) => {
+    const rowKey = `${campaign.id}-${keyword.id}`
+    const previousBidAmount = keyword.bidAmount && typeof keyword.bidAmount === 'object' ? keyword.bidAmount : {}
+    const nextBid = {
+      ...previousBidAmount,
+      amount: Number(nextBidAmount).toFixed(2),
+    }
+
+    try {
+      setUpdatingBidKeywordId(rowKey)
+
+      const response = await keywordAPI.updateBid(keyword.id, {
+        campaignId: campaign.id,
+        adGroupId: keyword.adGroupId ?? keyword.adgroupId,
+        bidAmount: nextBid,
+      })
+
+      const updatedKeyword = getUpdatedKeywordFromResponse(response.data)
+
+      setKeywords((currentKeywords) =>
+        currentKeywords.map((currentKeyword) =>
+          String(currentKeyword.id) === String(keyword.id)
+            ? {
+                ...currentKeyword,
+                ...updatedKeyword,
+                bidAmount: updatedKeyword?.bidAmount || nextBid,
+              }
+            : currentKeyword
+        )
+      )
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+      throw err
+    } finally {
+      setUpdatingBidKeywordId(null)
     }
   }
 
@@ -326,7 +366,9 @@ export default function CampaignDetail({ id }) {
                     campaignName={campaign.name}
                     campaignId={campaign.id}
                     updatingKeywordId={updatingKeywordId}
+                    updatingBidKeywordId={updatingBidKeywordId}
                     onToggleKeyword={handleToggleKeyword}
+                    onUpdateBid={handleUpdateKeywordBid}
                   />
                 ))}
               </tbody>

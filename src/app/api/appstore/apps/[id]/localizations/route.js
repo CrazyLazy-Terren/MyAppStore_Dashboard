@@ -1,10 +1,12 @@
 import appStoreConnect from '@/lib/appStoreConnect'
 import { ok, fail } from '@/lib/http'
+import { sortByLocale } from '@/lib/localeOrder'
 
-export async function GET(_request, { params }) {
+export async function GET(request, { params }) {
   try {
     const { id } = await params
-    const versionResult = await appStoreConnect.getAppLocalizations(id)
+    const platform = request.nextUrl.searchParams.get('platform') || 'IOS'
+    const versionResult = await appStoreConnect.getAppLocalizations(id, platform)
     const appInfoResult = await appStoreConnect.getAppInfoLocalizations(id)
 
     const mergedByLocale = new Map()
@@ -17,6 +19,8 @@ export async function GET(_request, { params }) {
 
       mergedByLocale.set(locale, {
         ...localization,
+        versionLocalizationId: localization.id || null,
+        appInfoLocalizationId: null,
         attributes: {
           ...localization.attributes,
         },
@@ -34,6 +38,8 @@ export async function GET(_request, { params }) {
         mergedByLocale.set(locale, {
           ...localization,
           id: localization.id || `appinfo-${locale}`,
+          versionLocalizationId: null,
+          appInfoLocalizationId: localization.id || null,
           attributes: {
             ...localization.attributes,
           },
@@ -43,6 +49,7 @@ export async function GET(_request, { params }) {
 
       mergedByLocale.set(locale, {
         ...existing,
+        appInfoLocalizationId: localization.id || null,
         attributes: {
           ...existing.attributes,
           name: existing?.attributes?.name || localization?.attributes?.name || '',
@@ -52,7 +59,7 @@ export async function GET(_request, { params }) {
     }
 
     return ok({
-      data: Array.from(mergedByLocale.values()),
+      data: sortByLocale(Array.from(mergedByLocale.values())),
       meta: {
         versionId: versionResult.versionId,
         versionString: versionResult.versionString,
@@ -60,6 +67,29 @@ export async function GET(_request, { params }) {
         appInfoId: appInfoResult.appInfoId,
       },
     })
+  } catch (error) {
+    return fail(error)
+  }
+}
+
+export async function DELETE(request) {
+  try {
+    const body = await request.json().catch(() => ({}))
+    const { versionLocalizationId, appInfoLocalizationId } = body || {}
+
+    if (!versionLocalizationId && !appInfoLocalizationId) {
+      throw new Error('versionLocalizationId or appInfoLocalizationId is required')
+    }
+
+    if (versionLocalizationId) {
+      await appStoreConnect.deleteVersionLocalization(versionLocalizationId)
+    }
+
+    if (appInfoLocalizationId) {
+      await appStoreConnect.deleteAppInfoLocalization(appInfoLocalizationId)
+    }
+
+    return ok({ deleted: true })
   } catch (error) {
     return fail(error)
   }

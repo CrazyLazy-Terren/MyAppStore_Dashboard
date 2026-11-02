@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-## 🚀 Getting Started with Apple Search Ads API Client
+## 🚀 Getting Started with App Growth Console
 
 ### Step 1: Install Dependencies
 
@@ -61,6 +61,16 @@ cp /path/to/AuthKey_XXXXXXXXXX.p8 ./keys/appstore-private-key.p8
 APP_STORE_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 APP_STORE_KEY_ID=XXXXXXXXXX
 APP_STORE_PRIVATE_KEY_PATH=./keys/appstore-private-key.p8
+APP_STORE_VENDOR_NUMBER=12345678
+```
+
+### (Optional) Gemini — Keyword Generation and Translation
+
+The keyword generator and metadata translator can use Gemini through Google's official `@google/genai` SDK. Set `GEMINI_API_KEY` in `.env`; the SDK reads it from the environment automatically.
+
+```env
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-3-flash-preview
 ```
 
 ### Step 3: Run the Application

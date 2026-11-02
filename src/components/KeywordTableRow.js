@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 export function getKeywordStatus(keyword) {
   return keyword.status || (keyword.deleted === true ? 'DELETED' : 'ACTIVE')
@@ -20,6 +20,12 @@ export function getNextKeywordStatus(keyword) {
 
 export function getKeywordToggleLabel(keyword) {
   return getNextKeywordStatus(keyword) === 'PAUSED' ? 'Pause' : 'Resume'
+}
+
+export function canEditKeywordBid(keyword) {
+  const status = String(getKeywordStatus(keyword)).toUpperCase()
+
+  return status !== 'DELETED' && status !== 'DISABLED'
 }
 
 export function getMoneyAmount(value) {
@@ -324,12 +330,52 @@ function DailySpendSparkline({ keyword, chartKey, gradientPrefix }) {
   )
 }
 
-export default function KeywordTableRow({ keyword, campaignName, campaignId, updatingKeywordId, onToggleKeyword, variant = 'campaign' }) {
+export default function KeywordTableRow({
+  keyword,
+  campaignName,
+  campaignId,
+  updatingKeywordId,
+  updatingBidKeywordId,
+  onToggleKeyword,
+  onUpdateBid,
+  variant = 'campaign',
+}) {
   const isApplicationVariant = variant === 'application'
-  const status = String(getKeywordStatus(keyword)).toUpperCase()
   const rowKey = `${campaignId || keyword.campaignId || 'unknown'}-${keyword.id}`
   const isUpdating = updatingKeywordId === String(keyword.id)
+  const isUpdatingBid = updatingBidKeywordId === rowKey
   const toggleLabel = getKeywordToggleLabel(keyword)
+  const bidAmount = getMoneyAmount(keyword.bidAmount)
+  const formattedBidAmount = bidAmount.toFixed(2)
+  const [isEditingBid, setIsEditingBid] = useState(false)
+  const [bidDraft, setBidDraft] = useState(formattedBidAmount)
+
+  useEffect(() => {
+    if (!isEditingBid) {
+      setBidDraft(formattedBidAmount)
+    }
+  }, [formattedBidAmount, isEditingBid])
+
+  const bidDraftAmount = Number(bidDraft)
+  const canSaveBid = Number.isFinite(bidDraftAmount) && bidDraftAmount > 0 && bidDraftAmount.toFixed(2) !== formattedBidAmount
+
+  const handleCancelBidEdit = () => {
+    setBidDraft(formattedBidAmount)
+    setIsEditingBid(false)
+  }
+
+  const handleSaveBid = async () => {
+    if (!canSaveBid || !onUpdateBid) {
+      return
+    }
+
+    try {
+      await onUpdateBid(keyword, bidDraftAmount)
+      setIsEditingBid(false)
+    } catch (_error) {
+      // The parent shows the API error; keep the editor open so the bid can be corrected.
+    }
+  }
 
   return (
     <tr className={isApplicationVariant ? 'align-top' : ''}>
@@ -346,7 +392,62 @@ export default function KeywordTableRow({ keyword, campaignName, campaignId, upd
           </button>
         </div>
       </td>
-      <td className="px-4 py-4">${getMoneyAmount(keyword.bidAmount).toFixed(2)}</td>
+      <td className="px-4 py-4">
+        {isEditingBid ? (
+          <div className="flex w-36 flex-col gap-2">
+            <label className="sr-only" htmlFor={`bid-${rowKey}`}>
+              Bid amount
+            </label>
+            <div className="flex items-center rounded-md border border-slate-200 bg-white px-2 py-1.5 shadow-sm transition focus-within:border-sky-400 focus-within:ring-4 focus-within:ring-sky-100">
+              <span className="text-sm font-semibold text-slate-400">$</span>
+              <input
+                id={`bid-${rowKey}`}
+                className="ml-1 min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-900 outline-none"
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={bidDraft}
+                onChange={(event) => setBidDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    handleSaveBid()
+                  }
+
+                  if (event.key === 'Escape') {
+                    handleCancelBidEdit()
+                  }
+                }}
+                disabled={isUpdatingBid}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded-md bg-slate-900 px-2 py-1 text-xs font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                onClick={handleSaveBid}
+                disabled={isUpdatingBid || !canSaveBid}>
+                {isUpdatingBid ? 'Saving...' : 'Save'}
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:text-slate-400"
+                onClick={handleCancelBidEdit}
+                disabled={isUpdatingBid}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-left font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400"
+            onClick={() => setIsEditingBid(true)}
+            disabled={!onUpdateBid || isUpdatingBid || !canEditKeywordBid(keyword)}
+            title={canEditKeywordBid(keyword) ? 'Edit bid' : 'Bid cannot be edited for this keyword status'}>
+            ${formattedBidAmount}
+          </button>
+        )}
+      </td>
       <td className="px-4 py-4">{Number(keyword.tapInstalls || 0).toLocaleString()}</td>
       <td className="px-4 py-4">
         <DailyDownloadsSparkline

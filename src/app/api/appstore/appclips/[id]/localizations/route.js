@@ -10,7 +10,12 @@ export async function GET(_request, { params }) {
     }
 
     const result = await appStoreConnect.getAppClipLocalizations(appClipId)
-    return ok({ data: result.localizations })
+    return ok({
+      data: result.localizations,
+      meta: {
+        defaultExperiences: result.defaultExperiences || [],
+      },
+    })
   } catch (error) {
     return fail(error)
   }

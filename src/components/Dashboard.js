@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { campaignAPI, reportAPI } from '@/components/api'
+import CountryDownloads from '@/components/CountryDownloads'
 import Reports from '@/components/Reports'
 import useAdsDateRange from '@/components/useAdsDateRange'
 import { buildCampaignReportRequest } from '@/lib/reportDateRange'
@@ -97,36 +98,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex w-full flex-col gap-6">
-      <div className="w-full rounded-3xl bg-white p-6 shadow-lg shadow-slate-200/70 ring-1 ring-slate-200 sm:p-8">
-        <div className="mb-6 flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Dashboard</h2>
-            <p className="mt-1 text-sm text-slate-500">Campaign counts plus aggregated performance for the shared ads date range.</p>
-          </div>
-
-          <div className="rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">
-            {startDate} to {endDate}
-          </div>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl bg-slate-50 p-5 ring-1 ring-slate-200">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Total Campaigns</h3>
-            <div className="mt-3 text-3xl font-bold tracking-tight text-slate-900">{stats.totalCampaigns}</div>
-          </div>
-          <div className="rounded-2xl bg-slate-50 p-5 ring-1 ring-slate-200">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Active Campaigns</h3>
-            <div className="mt-3 text-3xl font-bold tracking-tight text-slate-900">{stats.activeCampaigns}</div>
-          </div>
-          <div className="rounded-2xl bg-slate-50 p-5 ring-1 ring-slate-200">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Selected Range Spend</h3>
-            <div className="mt-3 text-3xl font-bold tracking-tight text-slate-900">${stats.totalSpend.toFixed(2)}</div>
-          </div>
-          <div className="rounded-2xl bg-slate-50 p-5 ring-1 ring-slate-200">
-            <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Selected Range Impressions</h3>
-            <div className="mt-3 text-3xl font-bold tracking-tight text-slate-900">{stats.totalImpressions.toLocaleString()}</div>
-          </div>
-        </div>
-      </div>
+      <CountryDownloads startDate={startDate} endDate={endDate} />
 
       <Reports
         defaultRangeDays={30}

@@ -205,6 +205,18 @@ export default function CampaignList() {
   const [campaignSpendMap, setCampaignSpendMap] = useState(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [lookupId, setLookupId] = useState('')
+
+  const handleLookupSubmit = (event) => {
+    event.preventDefault()
+    const trimmedId = lookupId.trim()
+
+    if (!trimmedId) {
+      return
+    }
+
+    router.push(`/campaigns/${encodeURIComponent(trimmedId)}`)
+  }
 
   const fetchCampaigns = async () => {
     try {
@@ -275,6 +287,27 @@ export default function CampaignList() {
           {startDate} to {endDate}
         </div>
       </div>
+
+      <form onSubmit={handleLookupSubmit} className="mb-6 flex flex-wrap items-center gap-2">
+        <label htmlFor="campaign-id-lookup" className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+          Campaign ID lookup
+        </label>
+        <input
+          id="campaign-id-lookup"
+          type="text"
+          inputMode="numeric"
+          value={lookupId}
+          onChange={(event) => setLookupId(event.target.value)}
+          placeholder="e.g. 1234567890"
+          className="w-52 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
+        />
+        <button
+          type="submit"
+          disabled={!lookupId.trim()}
+          className="inline-flex rounded-full bg-sky-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+          Go
+        </button>
+      </form>
 
       {campaigns.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">No campaigns found.</p>

@@ -36,15 +36,20 @@ function buildLocalizationPayloads(versionLocalizations = [], appInfoLocalizatio
 
 export async function POST(request) {
   try {
-    const { appId } = await request.json()
+    const { appId, localizations: submittedLocalizations } = await request.json()
 
     if (!appId) {
       throw new Error('App ID is required')
     }
 
-    const iosLocalizations = await appStoreConnect.getAppLocalizations(appId, 'IOS')
-    const appInfoLocalizations = await appStoreConnect.getAppInfoLocalizations(appId)
-    const localizations = buildLocalizationPayloads(iosLocalizations.localizations, appInfoLocalizations.localizations)
+    const hasSubmittedLocalizations = submittedLocalizations && Object.keys(submittedLocalizations).length > 0
+    let localizations = submittedLocalizations
+
+    if (!hasSubmittedLocalizations) {
+      const iosLocalizations = await appStoreConnect.getAppLocalizations(appId, 'IOS')
+      const appInfoLocalizations = await appStoreConnect.getAppInfoLocalizations(appId)
+      localizations = buildLocalizationPayloads(iosLocalizations.localizations, appInfoLocalizations.localizations)
+    }
 
     const updates = []
 
@@ -84,11 +89,12 @@ export async function POST(request) {
 
           if (Object.keys(updateData).length > 0) {
             const result = await appStoreConnect.updateAppMetadata(appId, locale, updateData, { platform: 'MAC_OS' })
+            const updatedIds = [result?.versionLocalization?.data?.id, result?.appInfoLocalization?.data?.id].filter(Boolean)
             updates.push({
               type: 'app',
               locale,
               status: 'success',
-              id: result?.data?.[0]?.id,
+              ids: updatedIds,
             })
           }
         } catch (err) {

@@ -88,7 +88,6 @@ function addSuggestion(map, keyword, score, rank, source) {
     sources: {
       title: 0,
       subtitle: 0,
-      genre: 0,
       seed: 0,
     },
   }
@@ -132,10 +131,6 @@ function buildSignalLabel(item) {
     sourceParts.push(`${item.sources.subtitle} in subtitles`)
   }
 
-  if (item.sources.genre > 0) {
-    sourceParts.push(`${item.sources.genre} in genres`)
-  }
-
   if (item.sources.seed > 0) {
     sourceParts.push('seed match')
   }
@@ -144,6 +139,39 @@ function buildSignalLabel(item) {
   const sourceLabel = sourceParts.length > 0 ? sourceParts.join(', ') : `${item.hits} matches in top search apps`
 
   return `${sourceLabel}; ${rankLabel}`
+}
+
+function getAppStoreUrl(result) {
+  const directUrl = String(result?.trackViewUrl || '').trim()
+  if (directUrl) {
+    return directUrl
+  }
+
+  const trackId = String(result?.trackId || '').trim()
+  return trackId ? `https://apps.apple.com/app/id${trackId}` : ''
+}
+
+function getAppStoreSearchUrl(appName) {
+  const normalizedName = String(appName || '').trim()
+  return normalizedName ? `https://apps.apple.com/search?term=${encodeURIComponent(normalizedName)}` : ''
+}
+
+function getTopAppsForKeyword(keyword, results = []) {
+  const normalizedKeyword = normalizeKeyword(keyword)
+  return results
+    .filter((result) => {
+      const title = normalizeKeyword(result?.trackName || '')
+      const subtitle = normalizeKeyword(result?.subtitle || result?.description || '')
+      return !normalizedKeyword || title.includes(normalizedKeyword) || subtitle.includes(normalizedKeyword)
+    })
+    .slice(0, 5)
+    .map((result, index) => ({
+      rank: index + 1,
+      name: result?.trackName || 'Unknown App',
+      subtitle: String(result?.subtitle || '').trim(),
+      url: getAppStoreUrl(result),
+      searchUrl: getAppStoreSearchUrl(result?.trackName),
+    }))
 }
 
 class AppStoreSearchClient {
@@ -200,11 +228,9 @@ class AppStoreSearchClient {
       const rankWeight = Math.max(4, 28 - index)
       const titleKeywords = extractCandidateKeywords(result?.trackName || '')
       const subtitleKeywords = extractCandidateKeywords(result?.subtitle || result?.description || '')
-      const genreKeywords = Array.isArray(result?.genres) ? result.genres.flatMap((genre) => extractCandidateKeywords(genre)) : []
 
       titleKeywords.forEach((keyword) => addSuggestion(map, keyword, rankWeight * 1.2, rank, 'title'))
       subtitleKeywords.slice(0, 8).forEach((keyword) => addSuggestion(map, keyword, rankWeight * 0.45, rank, 'subtitle'))
-      genreKeywords.forEach((keyword) => addSuggestion(map, keyword, rankWeight * 0.7, rank, 'genre'))
     })
 
     const suggestions = Array.from(map.values()).sort((left, right) => right.score - left.score)
@@ -222,6 +248,7 @@ class AppStoreSearchClient {
           max: 0,
         },
         signal: buildSignalLabel(item),
+        topApps: getTopAppsForKeyword(item.keyword, results),
       }
     })
   }

@@ -114,6 +114,7 @@ export default function ApplicationKeywords() {
   const [applicationsLoading, setApplicationsLoading] = useState(true)
   const [applicationsError, setApplicationsError] = useState(null)
   const [updatingKeywordId, setUpdatingKeywordId] = useState(null)
+  const [updatingBidKeywordId, setUpdatingBidKeywordId] = useState(null)
   const [sortField, setSortField] = useState('localSpend')
   const [sortDirection, setSortDirection] = useState('desc')
 
@@ -224,6 +225,45 @@ export default function ApplicationKeywords() {
       setError(err.message)
     } finally {
       setUpdatingKeywordId(null)
+    }
+  }
+
+  const handleUpdateKeywordBid = async (keyword, nextBidAmount) => {
+    const rowKey = `${keyword.campaignId || 'unknown'}-${keyword.id}`
+    const previousBidAmount = keyword.bidAmount && typeof keyword.bidAmount === 'object' ? keyword.bidAmount : {}
+    const nextBid = {
+      ...previousBidAmount,
+      amount: Number(nextBidAmount).toFixed(2),
+    }
+
+    try {
+      setUpdatingBidKeywordId(rowKey)
+
+      const response = await keywordAPI.updateBid(keyword.id, {
+        campaignId: keyword.campaignId,
+        adGroupId: keyword.adGroupId ?? keyword.adgroupId,
+        bidAmount: nextBid,
+      })
+
+      const updatedKeyword = getUpdatedKeywordFromResponse(response.data)
+
+      setKeywords((currentKeywords) =>
+        currentKeywords.map((currentKeyword) =>
+          String(currentKeyword.id) === String(keyword.id) && String(currentKeyword.campaignId) === String(keyword.campaignId)
+            ? {
+                ...currentKeyword,
+                ...updatedKeyword,
+                bidAmount: updatedKeyword?.bidAmount || nextBid,
+              }
+            : currentKeyword
+        )
+      )
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+      throw err
+    } finally {
+      setUpdatingBidKeywordId(null)
     }
   }
 
@@ -466,7 +506,9 @@ export default function ApplicationKeywords() {
                   campaignName={keyword.campaignName}
                   campaignId={keyword.campaignId}
                   updatingKeywordId={updatingKeywordId}
+                  updatingBidKeywordId={updatingBidKeywordId}
                   onToggleKeyword={handleToggleKeyword}
+                  onUpdateBid={handleUpdateKeywordBid}
                   variant="application"
                 />
               ))}

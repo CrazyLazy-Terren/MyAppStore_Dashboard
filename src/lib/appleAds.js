@@ -167,6 +167,45 @@ class AppleAdsClient {
     return this.request('POST', `/reports/campaigns?orgId=${orgId}`, payload, orgId)
   }
 
+  async getCountryReport({ startDate, endDate, adamId = null }) {
+    const response = await this.getCampaignReports({
+      startTime: startDate,
+      endTime: endDate,
+      groupBy: ['countryOrRegion'],
+      selector: {
+        orderBy: [{ field: 'countryOrRegion', sortOrder: 'ASCENDING' }],
+        pagination: { offset: 0, limit: 1000 },
+      },
+      timeZone: 'ORTZ',
+      returnRecordsWithNoMetrics: false,
+      returnRowTotals: true,
+      returnGrandTotals: false,
+    })
+    const rows = response?.data?.reportingDataResponse?.row || response?.reportingDataResponse?.row || []
+    const countries = new Map()
+
+    for (const row of rows) {
+      const metadata = row?.metadata || {}
+      const rowAdamId = String(metadata.app?.adamId ?? metadata.adamId ?? '')
+      if (adamId && rowAdamId && rowAdamId !== String(adamId)) {
+        continue
+      }
+
+      const countryCode = metadata.countryOrRegion || 'Unknown'
+      const total = row?.total || {}
+      const entry = countries.get(countryCode) || { countryCode, impressions: 0, taps: 0, installs: 0, spend: 0 }
+      entry.impressions += this.getKeywordMetricValue(total.impressions)
+      entry.taps += this.getKeywordMetricValue(total.taps)
+      // Tap installs only, so installs ÷ taps matches Apple's conversion rate and can't exceed 100% from view-through installs.
+      entry.installs += this.getKeywordMetricValue(total.tapInstalls ?? total.installs)
+      entry.spend += this.getKeywordMetricValue(total.localSpend)
+      entry.currency = entry.currency || total.localSpend?.currency || null
+      countries.set(countryCode, entry)
+    }
+
+    return Array.from(countries.values())
+  }
+
   getCampaignAppAdamId(campaign) {
     return String(campaign?.adamId ?? campaign?.app?.adamId ?? campaign?.appAdamId ?? '')
   }
@@ -733,6 +772,41 @@ class AppleAdsClient {
         {
           id: Number(keywordId),
           status,
+        },
+      ],
+      orgId
+    )
+  }
+
+  async updateKeywordBid(keywordId, { campaignId, adGroupId, bidAmount }) {
+    const orgId = await this.getOrgId()
+
+    if (!campaignId) {
+      throw new Error('campaignId is required to update a keyword bid')
+    }
+
+    if (!adGroupId) {
+      throw new Error('adGroupId is required to update a keyword bid')
+    }
+
+    const amount = this.getNumericValue(bidAmount)
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('bidAmount must be greater than 0')
+    }
+
+    const currency = bidAmount && typeof bidAmount === 'object' ? bidAmount.currency : null
+
+    return this.request(
+      'PUT',
+      `/campaigns/${campaignId}/adgroups/${adGroupId}/targetingkeywords/bulk?orgId=${orgId}`,
+      [
+        {
+          id: Number(keywordId),
+          bidAmount: {
+            amount: amount.toFixed(2),
+            ...(currency ? { currency } : {}),
+          },
         },
       ],
       orgId

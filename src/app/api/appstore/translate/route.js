@@ -1,7 +1,10 @@
 import { ok, fail } from '@/lib/http'
+import { generateGeminiText, getGeminiModel, hasGeminiApiKey } from '@/lib/gemini'
 
 let translationQueue = Promise.resolve()
 const DEFAULT_TRANSLATION_MODEL = 'gpt-5-chat'
+const DEFAULT_OPENAI_TRANSLATION_MODEL = 'gpt-5.5'
+const PRESERVED_URLS = ['https://www.apple.com/legal/internet-services/itunes/dev/stdeula/']
 
 function logTranslation(event, details = {}) {
   console.log(`[translate-api] ${event}`, {
@@ -61,6 +64,32 @@ function getEffectiveMaxChars(maxChars, strictLessThan) {
   return effectiveMaxChars >= 0 ? effectiveMaxChars : 0
 }
 
+function findPreservedUrl(text) {
+  return PRESERVED_URLS.find((url) => String(text || '').includes(url)) || null
+}
+
+function buildPrompt(mode, { text, sourceLocale, targetLocale, maxChars, strictLessThan }) {
+  const sourceLocaleDescription = getLocaleDescription(sourceLocale)
+  const targetLocaleDescription = getLocaleDescription(targetLocale)
+  const effectiveMaxChars = getEffectiveMaxChars(maxChars, strictLessThan)
+  const lengthInstruction = Number.isInteger(effectiveMaxChars)
+    ? ` Keep the text at ${strictLessThan ? 'fewer than' : 'at most'} ${maxChars} characters.`
+    : ''
+  const urlInstruction = ' Never translate, alter, shorten, or remove any URL — copy every URL character-for-character exactly as it appears in the source, especially https://www.apple.com/legal/internet-services/itunes/dev/stdeula/ if present.'
+
+  if (mode === 'shorten') {
+    return {
+      systemInstruction: `You are a professional app localization editor. Rewrite the given text in ${targetLocaleDescription || targetLocale} so it is shorter while preserving its meaning, tone, and key information. Return only the rewritten text with no explanation, no quotes, and no extra formatting.${lengthInstruction}${urlInstruction}`,
+      userInput: `The following text is written in ${targetLocaleDescription || targetLocale} and is too long. Rewrite it to be shorter while keeping the same meaning.\n\n${text}`,
+    }
+  }
+
+  return {
+    systemInstruction: `You are a professional app localization translator. Return only the translated text with no explanation, no quotes, and no extra formatting.${lengthInstruction}${urlInstruction}`,
+    userInput: `Translate from ${sourceLocaleDescription || sourceLocale} to ${targetLocaleDescription || targetLocale}. Preserve the target locale's writing system and regional conventions.\n\n${text}`,
+  }
+}
+
 async function enqueueTranslation(task) {
   const nextTask = translationQueue.then(task, task)
   translationQueue = nextTask.catch(() => undefined)
@@ -76,7 +105,107 @@ function pickModelCandidates(configuredModel) {
   return [configuredModel, ...preferredOrder.filter((model) => model !== configuredModel)]
 }
 
-async function translateWithGitHubModels({ text, sourceLocale, targetLocale, maxChars, strictLessThan }) {
+function extractOpenAIText(data) {
+  if (data?.output_text) {
+    return data.output_text
+  }
+
+  for (const item of data?.output || []) {
+    for (const content of item?.content || []) {
+      if (content?.type === 'output_text' && content?.text) {
+        return content.text
+      }
+    }
+  }
+
+  return ''
+}
+
+async function translateWithOpenAI({ text, sourceLocale, targetLocale, maxChars, strictLessThan, mode = 'translate' }) {
+  const token = process.env.OPENAI_API_KEY
+  const model = process.env.OPENAI_TRANSLATION_MODEL || DEFAULT_OPENAI_TRANSLATION_MODEL
+
+  if (!token) {
+    throw new Error('Missing OpenAI API key. Set OPENAI_API_KEY.')
+  }
+
+  const { systemInstruction, userInput } = buildPrompt(mode, { text, sourceLocale, targetLocale, maxChars, strictLessThan })
+
+  logTranslation('openai.translate.start', {
+    mode,
+    sourceLocale,
+    targetLocale,
+    textLength: String(text || '').length,
+    maxChars,
+    strictLessThan,
+    model,
+  })
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      model,
+      instructions: systemInstruction,
+      input: userInput,
+    }),
+  })
+
+  const data = await response.json().catch(() => null)
+  if (!response.ok) {
+    throw new Error(`OpenAI translation failed with ${model}: ${response.status} ${data?.error?.message || ''}`.trim())
+  }
+
+  const translatedText = extractOpenAIText(data).trim()
+  if (!translatedText) {
+    throw new Error(`OpenAI translation failed with ${model}: empty response`)
+  }
+
+  logTranslation('openai.translate.success', {
+    mode,
+    model,
+    outputLength: translatedText.length,
+  })
+
+  return translatedText
+}
+
+async function translateWithGemini({ text, sourceLocale, targetLocale, maxChars, strictLessThan, mode = 'translate' }) {
+  const model = getGeminiModel('GEMINI_TRANSLATION_MODEL')
+  const { systemInstruction, userInput } = buildPrompt(mode, { text, sourceLocale, targetLocale, maxChars, strictLessThan })
+
+  logTranslation('gemini.translate.start', {
+    mode,
+    sourceLocale,
+    targetLocale,
+    textLength: String(text || '').length,
+    maxChars,
+    strictLessThan,
+    model,
+  })
+
+  const translatedText = await generateGeminiText({
+    model,
+    contents: userInput,
+    config: {
+      systemInstruction,
+      temperature: 0.1,
+    },
+  })
+
+  logTranslation('gemini.translate.success', {
+    mode,
+    model,
+    outputLength: translatedText.length,
+  })
+
+  return translatedText
+}
+
+async function translateWithGitHubModels({ text, sourceLocale, targetLocale, maxChars, strictLessThan, mode = 'translate' }) {
   const token = process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN
   const configuredModel = process.env.GITHUB_MODELS_MODEL || DEFAULT_TRANSLATION_MODEL
 
@@ -85,12 +214,12 @@ async function translateWithGitHubModels({ text, sourceLocale, targetLocale, max
   }
 
   const candidates = pickModelCandidates(configuredModel)
-  const sourceLocaleDescription = getLocaleDescription(sourceLocale)
-  const targetLocaleDescription = getLocaleDescription(targetLocale)
+  const { systemInstruction, userInput } = buildPrompt(mode, { text, sourceLocale, targetLocale, maxChars, strictLessThan })
   let lastError = null
   let rateLimited = false
 
   logTranslation('translate.start', {
+    mode,
     sourceLocale,
     targetLocale,
     textLength: String(text || '').length,
@@ -101,10 +230,6 @@ async function translateWithGitHubModels({ text, sourceLocale, targetLocale, max
   })
 
   for (const model of candidates) {
-    const effectiveMaxChars = getEffectiveMaxChars(maxChars, strictLessThan)
-    const lengthInstruction = Number.isInteger(effectiveMaxChars)
-      ? ` Keep the translated text at ${strictLessThan ? 'fewer than' : 'at most'} ${maxChars} characters.`
-      : ''
     const attempt = 1
     logTranslation('model.attempt', {
       model,
@@ -121,11 +246,11 @@ async function translateWithGitHubModels({ text, sourceLocale, targetLocale, max
         messages: [
           {
             role: 'system',
-            content: `You are a professional app localization translator. Return only the translated text with no explanation, no quotes, and no extra formatting.${lengthInstruction}`,
+            content: systemInstruction,
           },
           {
             role: 'user',
-            content: `Translate from ${sourceLocaleDescription || sourceLocale} to ${targetLocaleDescription || targetLocale}. Preserve the target locale's writing system and regional conventions.\n\n${text}`,
+            content: userInput,
           },
         ],
       }),
@@ -203,6 +328,16 @@ export async function POST(request) {
       throw new Error('sourceLocale and targetLocale are required')
     }
 
+    // en-GB is copied from en-US as is, not translated.
+    if (sourceNormalizedLocale === 'en-us' && targetNormalizedLocale === 'en-gb') {
+      logTranslation('request.short_circuit_copy_en_us', {
+        requestId,
+        sourceLocale,
+        targetLocale,
+      })
+      return ok({ translatedText: text })
+    }
+
     if (sourceNormalizedLocale === targetNormalizedLocale) {
       logTranslation('request.short_circuit_same_locale', {
         requestId,
@@ -212,15 +347,68 @@ export async function POST(request) {
       return ok({ translatedText: text })
     }
 
-    const translatedText = await enqueueTranslation(() =>
-      translateWithGitHubModels({
-        text,
-        sourceLocale,
-        targetLocale,
+    const translateFn = hasGeminiApiKey() ? translateWithGemini : process.env.OPENAI_API_KEY ? translateWithOpenAI : translateWithGitHubModels
+    const runTranslation = (input, mode) =>
+      enqueueTranslation(() =>
+        translateFn({
+          text: input,
+          sourceLocale,
+          targetLocale,
+          maxChars,
+          strictLessThan: Boolean(strictLessThan),
+          mode,
+        })
+      )
+
+    const requiredUrl = findPreservedUrl(text)
+    const effectiveMaxChars = getEffectiveMaxChars(maxChars, strictLessThan)
+    const isOverLimit = (value) => Number.isInteger(effectiveMaxChars) && Array.from(value || '').length > effectiveMaxChars
+    const MAX_SHORTEN_ATTEMPTS = 2
+
+    let translatedText = await runTranslation(text, 'translate')
+
+    let shortenAttempts = 0
+    while (isOverLimit(translatedText) && shortenAttempts < MAX_SHORTEN_ATTEMPTS) {
+      logTranslation('request.oversized', {
+        requestId,
         maxChars,
-        strictLessThan: Boolean(strictLessThan),
+        strictLessThan,
+        attempt: shortenAttempts + 1,
+        outputLength: Array.from(translatedText).length,
       })
-    )
+      translatedText = await runTranslation(translatedText, 'shorten')
+      shortenAttempts += 1
+      logTranslation('request.shortened', {
+        requestId,
+        attempt: shortenAttempts,
+        outputLength: Array.from(translatedText).length,
+      })
+    }
+
+    if (requiredUrl && !translatedText.includes(requiredUrl)) {
+      logTranslation('request.url_reattached', { requestId, requiredUrl })
+      translatedText = `${translatedText.trim()}\n${requiredUrl}`
+
+      let urlShortenAttempts = 0
+      while (isOverLimit(translatedText) && urlShortenAttempts < MAX_SHORTEN_ATTEMPTS) {
+        translatedText = await runTranslation(translatedText, 'shorten')
+        urlShortenAttempts += 1
+        logTranslation('request.shortened_after_url', {
+          requestId,
+          attempt: urlShortenAttempts,
+          outputLength: Array.from(translatedText).length,
+        })
+      }
+    }
+
+    if (isOverLimit(translatedText)) {
+      logTranslation('request.still_oversized', {
+        requestId,
+        maxChars,
+        strictLessThan,
+        outputLength: Array.from(translatedText).length,
+      })
+    }
 
     logTranslation('request.completed', {
       requestId,
